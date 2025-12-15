@@ -12,3 +12,4 @@ tower-http = { version = "0.4", features = ["fs"] }
 # NEW: For talking to GitHub API
 reqwest = { version = "0.11", features = ["json"] }
 base64 = "0.21"
+axum-extra = { version = "0.7", features = ["cookie"] }

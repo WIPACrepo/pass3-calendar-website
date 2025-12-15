@@ -12,6 +12,37 @@
             background-color: #f4f6f8;
         }
 
+        /* --- UI ELEMENTS --- */
+        #top-bar {
+            max-width: 1100px;
+            margin: 0 auto 15px auto;
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+        }
+
+        .login-btn {
+            background: #2c3e50;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .login-btn:hover { background: #1a252f; }
+        
+        .logout-btn {
+            background: #dc3545; /* Red for logout */
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            display: none; /* Hidden by default */
+        }
+
         /* --- CALENDAR CONTAINER --- */
         #calendar-container {
             max-width: 1100px; 
@@ -48,6 +79,12 @@
             vertical-align: middle;
         }
 
+        /* --- FORCE BLACK TEXT ON EVENTS --- */
+        .fc-event, .fc-event-main, .fc-event-title, .fc-event-time {
+            color: #000000 !important;
+            font-weight: 700 !important;
+        }
+
         /* --- MODAL (POPUP) --- */
         .modal {
             display: none; 
@@ -55,7 +92,7 @@
             z-index: 1000; 
             left: 0; top: 0;
             width: 100%; height: 100%; 
-            background-color: rgba(0,0,0,0.5); /* Dim background */
+            background-color: rgba(0,0,0,0.5);
             backdrop-filter: blur(2px);
         }
 
@@ -73,17 +110,12 @@
 
         .close {
             position: absolute;
-            right: 20px;
-            top: 15px;
-            font-size: 28px;
-            font-weight: bold;
-            color: #aaa;
+            right: 20px; top: 15px;
+            font-size: 28px; font-weight: bold; color: #aaa;
             cursor: pointer;
-            transition: color 0.2s;
         }
         .close:hover { color: #000; }
         
-        /* Modal Typography */
         #modalTitle { margin-top: 0; color: #333; }
         .modal-label { font-weight: bold; color: #666; display: inline-block; width: 80px; }
         
@@ -97,224 +129,212 @@
         }
 
         .btn {
-            display: block;
-            width: 100%;
-            text-align: center;
-            margin-top: 25px;
-            padding: 12px 0;
-            background-color: #007bff;
-            color: white;
-            text-decoration: none;
-            border-radius: 6px;
-            font-weight: bold;
-            transition: background 0.2s;
+            display: block; width: 100%; text-align: center; margin-top: 25px; padding: 12px 0;
+            background-color: #007bff; color: white; text-decoration: none; border-radius: 6px; font-weight: bold;
         }
         .btn:hover { background-color: #0056b3; }
-
-        .fc-event, 
-        .fc-event-main, 
-        .fc-event-title,
-        .fc-event-time {
-            color: #000000 !important;
-            font-weight: 700 !important; /* Make it bold so it's readable on colors */
-        }
-
-        /* Optional: Add a subtle text shadow for better contrast on darker colors */
-        .fc-event-title {
-            text-shadow: 0px 0px 2px rgba(255,255,255,0.5);
-        }
     </style>
 
     <script>
       document.addEventListener('DOMContentLoaded', function() {
         var calendarEl = document.getElementById('calendar');
 
-        // --- 1. CONFIGURATION ---
+        // --- AUTH LOGIC ---
+        // Simple check: see if cookie contains our flag
+        function isLoggedIn() {
+            return document.cookie.includes("session=admin_authorized");
+        }
+
+        function updateAuthUI() {
+            if(isLoggedIn()) {
+                document.getElementById('btnLogin').style.display = 'none';
+                document.getElementById('btnLogout').style.display = 'block';
+                document.getElementById('loginStatusText').innerText = "Logged in as Admin";
+            } else {
+                document.getElementById('btnLogin').style.display = 'block';
+                document.getElementById('btnLogout').style.display = 'none';
+                document.getElementById('loginStatusText').innerText = "";
+            }
+        }
+
+        // --- CALENDAR CONFIG ---
         const workflowSteps = {
-            'Transfer from Tape': 15,
-            'Process Step 1':     30,
-            'Finish Step 1':      45,
-            'Transfer WIPAC':     60,
-            'Process Step 2':     75,
-            'Finish Step 2':      90,
-            'Complete':           100
+            'Transfer from Tape': 15, 'Process Step 1': 30, 'Finish Step 1': 45,
+            'Transfer WIPAC': 60, 'Process Step 2': 75, 'Finish Step 2': 90, 'Complete': 100
         };
 
         const colors = {
-            progress: '#fd7e14', // Orange
-            empty:    '#e9ecef', // Light Grey
-            complete: '#28a745', // Green
-            error:    '#dc3545', // Red
-            text:     '#000000'     // Dark text for contrast
+            progress: '#fd7e14', empty: '#e9ecef', complete: '#28a745', error: '#dc3545', text: '#000000'
         };
 
-        // --- 2. HELPER FUNCTIONS ---
         function getStyleForStatus(status) {
             const safeStatus = (status || "").toLowerCase();
+            if (safeStatus.includes('error')) return { background: colors.error, border: 'none' };
+            if (safeStatus === 'complete') return { background: colors.complete, border: 'none' };
 
-            // A. Errors (Solid Red)
-            if (safeStatus.includes('error')) {
-                return { background: colors.error, textColor: 'white', border: 'none' };
-            }
-
-            // B. Complete (Solid Green)
-            if (safeStatus === 'complete') {
-                return { background: colors.complete, textColor: 'white', border: 'none' };
-            }
-
-            // C. In Progress (Gradient Bar)
             const percent = workflowSteps[status] || 0;
             const gradient = `linear-gradient(to right, ${colors.progress} ${percent}%, ${colors.empty} ${percent}%)`;
-            
-            return { 
-                background: gradient, 
-                textColor: colors.text,
-                border: '1px solid #ddd' 
-            };
+            return { background: gradient, border: '1px solid #999' };
         }
 
-        // --- 3. CALENDAR SETUP ---
         var calendar = new FullCalendar.Calendar(calendarEl, {
           initialView: 'dayGridMonth',
           height: 'auto',
           headerToolbar: {
-            left: 'prev,next today',
-            center: 'title',
-            right: 'dayGridMonth,listMonth' 
+            left: 'prev,next today', center: 'title', right: 'dayGridMonth,listMonth' 
           },
           events: '/api/events', 
 
-          // VISUAL LOGIC
           eventDidMount: function(info) {
             const status = info.event.extendedProps.status;
             const style = getStyleForStatus(status);
-
             info.el.style.background = style.background;
-            info.el.style.color = style.textColor;
             info.el.style.border = style.border;
-            info.el.style.fontWeight = '600';
-            info.el.title = `${status} - Click for details`;
+            info.el.title = `${status}`;
           },
 
-          // CLICK LOGIC (Modal)
+          // --- MODAL LOGIC ---
           eventClick: function(info) {
             info.jsEvent.preventDefault();
             const props = info.event.extendedProps;
             
-            // Populate basic info
             document.getElementById('modalTitle').innerText = info.event.title;
             document.getElementById('modalDate').innerText = info.event.start.toLocaleDateString();
             document.getElementById('modalDesc').innerText = props.description || "";
             document.getElementById('modalLink').href = props.url || "#";
 
-            // Update the colored badge to match current status
+            // Status Badge
             const badge = document.getElementById('modalStatus');
             badge.innerText = props.status;
-            // Simple coloring for the badge
             if(props.status.toLowerCase().includes('error')) badge.style.backgroundColor = colors.error;
             else if(props.status === 'Complete') badge.style.backgroundColor = colors.complete;
             else badge.style.backgroundColor = colors.progress;
 
-
-            // 1. POPULATE DROPDOWN
-            const select = document.getElementById('statusSelect');
-            select.innerHTML = ''; 
-            
-            // Generate options
-            const allOptions = Object.keys(workflowSteps).concat(['Step 1 Error', 'Step 2 Error']);
-            
-            allOptions.forEach(opt => {
-                const option = document.createElement('option');
-                option.value = opt;
-                option.text = opt;
-                if (opt === props.status) option.selected = true;
-                select.appendChild(option);
-            });
-
-            // 2. HANDLE SAVE
-            const saveBtn = document.getElementById('saveBtn');
-            const msg = document.getElementById('saveMsg');
-            msg.style.display = 'none'; 
-            
-            // Remove old listeners to prevent duplicate clicks (simple clone trick)
-            const newBtn = saveBtn.cloneNode(true);
-            saveBtn.parentNode.replaceChild(newBtn, saveBtn);
-
-            newBtn.onclick = function() {
-                const newStatus = select.value;
+            // --- PERMISSION CHECK ---
+            const editSection = document.getElementById('editSection');
+            if (isLoggedIn()) {
+                editSection.style.display = 'block';
                 
-                // Send to Backend
-                fetch('/api/events', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        title: info.event.title, 
-                        new_status: newStatus
-                    })
-                })
-                .then(() => {
-                    // Show "Saved!"
-                    msg.style.display = 'block';
-                    
-                    // Update the Event Object in memory
-                    info.event.setExtendedProp('status', newStatus);
-                    
-                    // Update Badge text in Modal
-                    badge.innerText = newStatus;
-                    if(newStatus.toLowerCase().includes('error')) badge.style.backgroundColor = colors.error;
-                    else if(newStatus === 'Complete') badge.style.backgroundColor = colors.complete;
-                    else badge.style.backgroundColor = colors.progress;
-
-                    // Re-render Calendar to show new progress bar
-                    calendar.render(); 
+                // Populate Dropdown
+                const select = document.getElementById('statusSelect');
+                select.innerHTML = ''; 
+                const allOptions = Object.keys(workflowSteps).concat(['Step 1 Error', 'Step 2 Error']);
+                
+                allOptions.forEach(opt => {
+                    const option = document.createElement('option');
+                    option.value = opt;
+                    option.text = opt;
+                    if (opt === props.status) option.selected = true;
+                    select.appendChild(option);
                 });
-            };
+
+                // Handle Save
+                const saveBtn = document.getElementById('saveBtn');
+                const msg = document.getElementById('saveMsg');
+                msg.style.display = 'none'; 
+                
+                // Clean clone to remove old listeners
+                const newBtn = saveBtn.cloneNode(true);
+                saveBtn.parentNode.replaceChild(newBtn, saveBtn);
+
+                newBtn.onclick = function() {
+                    const newStatus = select.value;
+                    fetch('/api/events', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ title: info.event.title, new_status: newStatus })
+                    }).then(res => {
+                        if (res.status === 401) {
+                            alert("Session expired. Please log in.");
+                        } else {
+                            msg.style.display = 'inline';
+                            info.event.setExtendedProp('status', newStatus);
+                            badge.innerText = newStatus;
+                            // Update badge color
+                            if(newStatus.toLowerCase().includes('error')) badge.style.backgroundColor = colors.error;
+                            else if(newStatus === 'Complete') badge.style.backgroundColor = colors.complete;
+                            else badge.style.backgroundColor = colors.progress;
+                            calendar.render(); 
+                        }
+                    });
+                };
+            } else {
+                // Not Logged In -> Hide Edit controls
+                editSection.style.display = 'none';
+            }
 
             document.getElementById('eventModal').style.display = "block";
           }
-        }); // <--- THIS WAS MISSING IN YOUR CODE
+        });
 
         calendar.render();
+        updateAuthUI(); // Check login on load
 
-        // --- 4. MODAL INTERACTIONS ---
-        document.querySelector('.close').onclick = function() {
-            document.getElementById('eventModal').style.display = "none";
-        }
-        window.onclick = function(event) {
-            if (event.target == document.getElementById('eventModal')) {
-                document.getElementById('eventModal').style.display = "none";
-            }
-        }
-        document.addEventListener('keydown', function(event) {
-            if (event.key === "Escape") {
-                document.getElementById('eventModal').style.display = "none";
+        // --- GLOBAL INTERACTIONS ---
+        
+        // 1. Open Login Modal
+        document.getElementById('btnLogin').onclick = function() {
+            document.getElementById('loginModal').style.display = 'block';
+        };
+
+        // 2. Perform Login
+        document.getElementById('doLoginBtn').onclick = function() {
+            const pass = document.getElementById('passwordInput').value;
+            fetch('/api/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ password: pass })
+            }).then(async res => {
+                const text = await res.json();
+                if(text === "Login Successful") {
+                    document.getElementById('loginModal').style.display = 'none';
+                    updateAuthUI();
+                    alert("Logged in! You can now edit events.");
+                } else {
+                    alert("Incorrect Password");
+                }
+            });
+        };
+
+        // 3. Perform Logout (Clear cookie)
+        document.getElementById('btnLogout').onclick = function() {
+            document.cookie = "session=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+            updateAuthUI();
+            alert("Logged out.");
+        };
+
+        // Close Buttons for Modals
+        document.querySelectorAll('.close').forEach(el => {
+            el.onclick = function() {
+                el.closest('.modal').style.display = "none";
             }
         });
+        
+        // Close on outside click
+        window.onclick = function(event) {
+            if (event.target.classList.contains('modal')) {
+                event.target.style.display = "none";
+            }
+        }
       });
     </script>
 </head>
 <body>
 
+    <div id="top-bar">
+        <span id="loginStatusText" style="margin-right: 15px; font-weight: bold; color: #555;"></span>
+        <button id="btnLogin" class="login-btn">Login</button>
+        <button id="btnLogout" class="logout-btn">Logout</button>
+    </div>
+
     <div id="calendar-container">
         <h1>Workflow Schedule</h1>
 
         <div class="legend">
-            <div class="legend-item">
-                <span class="dot" style="background-color: #e9ecef; border: 1px solid #ccc;"></span>
-                Pending
-            </div>
-            <div class="legend-item">
-                <span class="dot" style="background-color: #fd7e14;"></span>
-                In Progress
-            </div>
-            <div class="legend-item">
-                <span class="dot" style="background-color: #28a745;"></span>
-                Complete
-            </div>
-            <div class="legend-item">
-                <span class="dot" style="background-color: #dc3545;"></span>
-                Error
-            </div>
+            <div class="legend-item"><span class="dot" style="background-color: #e9ecef; border: 1px solid #ccc;"></span>Pending</div>
+            <div class="legend-item"><span class="dot" style="background-color: #fd7e14;"></span>In Progress</div>
+            <div class="legend-item"><span class="dot" style="background-color: #28a745;"></span>Complete</div>
+            <div class="legend-item"><span class="dot" style="background-color: #dc3545;"></span>Error</div>
         </div>
 
         <div id='calendar'></div>
@@ -324,30 +344,30 @@
         <div class="modal-content">
             <span class="close">&times;</span>
             <h2 id="modalTitle">Event Title</h2>
-            
             <p><span class="modal-label">Date:</span> <span id="modalDate"></span></p>
 
-            <div style="margin: 15px 0; padding: 15px; background: #f9f9f9; border-radius: 8px;">
+            <div id="editSection" style="margin: 15px 0; padding: 15px; background: #f9f9f9; border-radius: 8px; display: none;">
                 <label class="modal-label">Update:</label>
-                <select id="statusSelect" style="padding: 5px; font-size: 1em; border-radius: 4px; width: 200px;">
-                </select>
-                 <button id="saveBtn" style="margin-left: 10px; padding: 6px 12px; background: #2c3e50; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                 Save
-                </button>
+                <select id="statusSelect" style="padding: 5px; font-size: 1em; border-radius: 4px; width: 180px;"></select>
+                <button id="saveBtn" style="margin-left: 10px; padding: 6px 12px; background: #2c3e50; color: white; border: none; border-radius: 4px; cursor: pointer;">Save</button>
                 <span id="saveMsg" style="color: #28a745; margin-left:10px; font-weight:bold; display: none;">Saved!</span>
             </div>
             
-            <p><span class="modal-label">Current:</span> 
-                <span id="modalStatus" class="status-badge"></span>
-            </p>
-            
+            <p><span class="modal-label">Current:</span> <span id="modalStatus" class="status-badge"></span></p>
             <hr style="border: 0; border-top: 1px solid #eee; margin: 15px 0;">
-            
             <p style="color: #666; line-height: 1.5;" id="modalDesc"></p>
-            
-            <a id="modalLink" href="#" target="_blank" class="btn">
-                Open Resource &rarr;
-            </a>
+            <a id="modalLink" href="#" target="_blank" class="btn">Open Resource &rarr;</a>
+        </div>
+    </div>
+
+    <div id="loginModal" class="modal">
+        <div class="modal-content" style="max-width: 300px; text-align: center;">
+            <span class="close">&times;</span>
+            <h2>Login</h2>
+            <p>Enter Administrator Password:</p>
+            <input type="password" id="passwordInput" placeholder="Password" style="padding: 10px; width: 80%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px;">
+            <br>
+            <button id="doLoginBtn" style="padding: 10px 20px; background: #2c3e50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Submit</button>
         </div>
     </div>
 
