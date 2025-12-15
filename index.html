@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset='utf-8' />
+    <title>Workflow Calendar</title>
+    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.js'></script>
+    
+    <style>
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; 
+            padding: 20px; 
+            background-color: #f4f6f8;
+        }
+
+        /* --- CALENDAR CONTAINER --- */
+        #calendar-container {
+            max-width: 1100px; 
+            margin: 0 auto; 
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+
+        h1 { text-align: center; color: #2c3e50; margin-bottom: 25px; }
+
+        /* --- LEGEND --- */
+        .legend {
+            text-align: center;
+            margin-bottom: 25px;
+            padding: 12px;
+            background: #fff;
+            border-bottom: 1px solid #eee;
+        }
+        .legend-item {
+            display: inline-block;
+            margin: 0 15px;
+            font-size: 0.9em;
+            color: #555;
+            vertical-align: middle;
+        }
+        .dot {
+            height: 12px;
+            width: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+
+        /* --- MODAL (POPUP) --- */
+        .modal {
+            display: none; 
+            position: fixed; 
+            z-index: 1000; 
+            left: 0; top: 0;
+            width: 100%; height: 100%; 
+            background-color: rgba(0,0,0,0.5); /* Dim background */
+            backdrop-filter: blur(2px);
+        }
+
+        .modal-content {
+            background-color: #fff;
+            margin: 10vh auto; 
+            padding: 30px;
+            border: 1px solid #888;
+            width: 90%;
+            max-width: 500px;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            position: relative;
+        }
+
+        .close {
+            position: absolute;
+            right: 20px;
+            top: 15px;
+            font-size: 28px;
+            font-weight: bold;
+            color: #aaa;
+            cursor: pointer;
+            transition: color 0.2s;
+        }
+        .close:hover { color: #000; }
+        
+        /* Modal Typography */
+        #modalTitle { margin-top: 0; color: #333; }
+        .modal-label { font-weight: bold; color: #666; display: inline-block; width: 80px; }
+        
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            color: white;
+            font-weight: bold;
+            font-size: 0.85em;
+            display: inline-block;
+        }
+
+        .btn {
+            display: block;
+            width: 100%;
+            text-align: center;
+            margin-top: 25px;
+            padding: 12px 0;
+            background-color: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+        .btn:hover { background-color: #0056b3; }
+
+        .fc-event, 
+        .fc-event-main, 
+        .fc-event-title,
+        .fc-event-time {
+            color: #000000 !important;
+            font-weight: 700 !important; /* Make it bold so it's readable on colors */
+        }
+
+        /* Optional: Add a subtle text shadow for better contrast on darker colors */
+        .fc-event-title {
+            text-shadow: 0px 0px 2px rgba(255,255,255,0.5);
+        }
+    </style>
+
+    <script>
+      document.addEventListener('DOMContentLoaded', function() {
+        var calendarEl = document.getElementById('calendar');
+
+        // --- 1. CONFIGURATION ---
+        const workflowSteps = {
+            'Transfer from Tape': 15,
+            'Process Step 1':     30,
+            'Finish Step 1':      45,
+            'Transfer WIPAC':     60,
+            'Process Step 2':     75,
+            'Finish Step 2':      90,
+            'Complete':           100
+        };
+
+        const colors = {
+            progress: '#fd7e14', // Orange
+            empty:    '#e9ecef', // Light Grey
+            complete: '#28a745', // Green
+            error:    '#dc3545', // Red
+            text:     '#000000'     // Dark text for contrast
+        };
+
+        // --- 2. HELPER FUNCTIONS ---
+        function getStyleForStatus(status) {
+            const safeStatus = (status || "").toLowerCase();
+
+            // A. Errors (Solid Red)
+            if (safeStatus.includes('error')) {
+                return { background: colors.error, textColor: 'white', border: 'none' };
+            }
+
+            // B. Complete (Solid Green)
+            if (safeStatus === 'complete') {
+                return { background: colors.complete, textColor: 'white', border: 'none' };
+            }
+
+            // C. In Progress (Gradient Bar)
+            const percent = workflowSteps[status] || 0;
+            const gradient = `linear-gradient(to right, ${colors.progress} ${percent}%, ${colors.empty} ${percent}%)`;
+            
+            return { 
+                background: gradient, 
+                textColor: colors.text,
+                border: '1px solid #ddd' 
+            };
+        }
+
+        // --- 3. CALENDAR SETUP ---
+        var calendar = new FullCalendar.Calendar(calendarEl, {
+          initialView: 'dayGridMonth',
+          height: 'auto',
+          headerToolbar: {
+            left: 'prev,next today',
+            center: 'title',
+            right: 'dayGridMonth,listMonth' 
+          },
+          events: '/api/events', 
+
+          // VISUAL LOGIC
+          eventDidMount: function(info) {
+            const status = info.event.extendedProps.status;
+            const style = getStyleForStatus(status);
+
+            info.el.style.background = style.background;
+            info.el.style.color = style.textColor;
+            info.el.style.border = style.border;
+            info.el.style.fontWeight = '600';
+            info.el.title = `${status} - Click for details`;
+          },
+
+          // CLICK LOGIC (Modal)
+          eventClick: function(info) {
+            info.jsEvent.preventDefault();
+            const props = info.event.extendedProps;
+            
+            // Populate basic info
+            document.getElementById('modalTitle').innerText = info.event.title;
+            document.getElementById('modalDate').innerText = info.event.start.toLocaleDateString();
+            document.getElementById('modalDesc').innerText = props.description || "";
+            document.getElementById('modalLink').href = props.url || "#";
+
+            // Update the colored badge to match current status
+            const badge = document.getElementById('modalStatus');
+            badge.innerText = props.status;
+            // Simple coloring for the badge
+            if(props.status.toLowerCase().includes('error')) badge.style.backgroundColor = colors.error;
+            else if(props.status === 'Complete') badge.style.backgroundColor = colors.complete;
+            else badge.style.backgroundColor = colors.progress;
+
+
+            // 1. POPULATE DROPDOWN
+            const select = document.getElementById('statusSelect');
+            select.innerHTML = ''; 
+            
+            // Generate options
+            const allOptions = Object.keys(workflowSteps).concat(['Step 1 Error', 'Step 2 Error']);
+            
+            allOptions.forEach(opt => {
+                const option = document.createElement('option');
+                option.value = opt;
+                option.text = opt;
+                if (opt === props.status) option.selected = true;
+                select.appendChild(option);
+            });
+
+            // 2. HANDLE SAVE
+            const saveBtn = document.getElementById('saveBtn');
+            const msg = document.getElementById('saveMsg');
+            msg.style.display = 'none'; 
+            
+            // Remove old listeners to prevent duplicate clicks (simple clone trick)
+            const newBtn = saveBtn.cloneNode(true);
+            saveBtn.parentNode.replaceChild(newBtn, saveBtn);
+
+            newBtn.onclick = function() {
+                const newStatus = select.value;
+                
+                // Send to Backend
+                fetch('/api/events', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: info.event.title, 
+                        new_status: newStatus
+                    })
+                })
+                .then(() => {
+                    // Show "Saved!"
+                    msg.style.display = 'block';
+                    
+                    // Update the Event Object in memory
+                    info.event.setExtendedProp('status', newStatus);
+                    
+                    // Update Badge text in Modal
+                    badge.innerText = newStatus;
+                    if(newStatus.toLowerCase().includes('error')) badge.style.backgroundColor = colors.error;
+                    else if(newStatus === 'Complete') badge.style.backgroundColor = colors.complete;
+                    else badge.style.backgroundColor = colors.progress;
+
+                    // Re-render Calendar to show new progress bar
+                    calendar.render(); 
+                });
+            };
+
+            document.getElementById('eventModal').style.display = "block";
+          }
+        }); // <--- THIS WAS MISSING IN YOUR CODE
+
+        calendar.render();
+
+        // --- 4. MODAL INTERACTIONS ---
+        document.querySelector('.close').onclick = function() {
+            document.getElementById('eventModal').style.display = "none";
+        }
+        window.onclick = function(event) {
+            if (event.target == document.getElementById('eventModal')) {
+                document.getElementById('eventModal').style.display = "none";
+            }
+        }
+        document.addEventListener('keydown', function(event) {
+            if (event.key === "Escape") {
+                document.getElementById('eventModal').style.display = "none";
+            }
+        });
+      });
+    </script>
+</head>
+<body>
+
+    <div id="calendar-container">
+        <h1>Workflow Schedule</h1>
+
+        <div class="legend">
+            <div class="legend-item">
+                <span class="dot" style="background-color: #e9ecef; border: 1px solid #ccc;"></span>
+                Pending
+            </div>
+            <div class="legend-item">
+                <span class="dot" style="background-color: #fd7e14;"></span>
+                In Progress
+            </div>
+            <div class="legend-item">
+                <span class="dot" style="background-color: #28a745;"></span>
+                Complete
+            </div>
+            <div class="legend-item">
+                <span class="dot" style="background-color: #dc3545;"></span>
+                Error
+            </div>
+        </div>
+
+        <div id='calendar'></div>
+    </div>
+
+    <div id="eventModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2 id="modalTitle">Event Title</h2>
+            
+            <p><span class="modal-label">Date:</span> <span id="modalDate"></span></p>
+
+            <div style="margin: 15px 0; padding: 15px; background: #f9f9f9; border-radius: 8px;">
+                <label class="modal-label">Update:</label>
+                <select id="statusSelect" style="padding: 5px; font-size: 1em; border-radius: 4px; width: 200px;">
+                </select>
+                 <button id="saveBtn" style="margin-left: 10px; padding: 6px 12px; background: #2c3e50; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                 Save
+                </button>
+                <span id="saveMsg" style="color: #28a745; margin-left:10px; font-weight:bold; display: none;">Saved!</span>
+            </div>
+            
+            <p><span class="modal-label">Current:</span> 
+                <span id="modalStatus" class="status-badge"></span>
+            </p>
+            
+            <hr style="border: 0; border-top: 1px solid #eee; margin: 15px 0;">
+            
+            <p style="color: #666; line-height: 1.5;" id="modalDesc"></p>
+            
+            <a id="modalLink" href="#" target="_blank" class="btn">
+                Open Resource &rarr;
+            </a>
+        </div>
+    </div>
+
+</body>
+</html>
