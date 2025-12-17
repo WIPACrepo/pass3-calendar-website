@@ -133,6 +133,88 @@
             background-color: #007bff; color: white; text-decoration: none; border-radius: 6px; font-weight: bold;
         }
         .btn:hover { background-color: #0056b3; }
+
+        /* --- PROGRESS BAR --- */
+        .progress-section {
+            margin-bottom: 25px;
+            padding: 15px;
+            background: #f9f9f9;
+            border-radius: 8px;
+            border-left: 4px solid #2c3e50;
+        }
+        .progress-label {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 8px;
+            font-size: 0.95em;
+        }
+        .progress-bar-container {
+            background: #e9ecef;
+            border-radius: 8px;
+            height: 24px;
+            overflow: hidden;
+            border: 1px solid #dee2e6;
+            position: relative;
+        }
+        .progress-bar-fill {
+            background: linear-gradient(90deg, #28a745, #20c997);
+            height: 100%;
+            border-radius: 8px;
+            transition: width 0.5s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 0.8em;
+            min-width: 30px;
+        }
+
+        /* --- BULK UPDATE SECTION --- */
+        .bulk-update-section {
+            margin: 25px 0;
+            padding: 15px;
+            background: #f0f8ff;
+            border-radius: 8px;
+            border-left: 4px solid #007bff;
+            display: none;
+        }
+        .bulk-update-section.visible {
+            display: block;
+        }
+        .date-range-inputs {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+        }
+        .date-range-inputs label {
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .date-range-inputs input {
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 0.95em;
+        }
+        .bulk-btn {
+            padding: 8px 16px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .bulk-btn:hover {
+            background: #0056b3;
+        }
+        .bulk-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
     </style>
 
     <script>
@@ -150,15 +232,18 @@
                 document.getElementById('btnLogin').style.display = 'none';
                 document.getElementById('btnLogout').style.display = 'block';
                 document.getElementById('loginStatusText').innerText = "Logged in as Admin";
+                document.getElementById('bulkUpdateSection').classList.add('visible');
             } else {
                 document.getElementById('btnLogin').style.display = 'block';
                 document.getElementById('btnLogout').style.display = 'none';
                 document.getElementById('loginStatusText').innerText = "";
+                document.getElementById('bulkUpdateSection').classList.remove('visible');
             }
         }
 
         // --- CALENDAR CONFIG ---
         const workflowSteps = {
+            'Not Yet Started': 0,
             'Transfer from Tape': 15, 'Process Step 1': 30, 'Finish Step 1': 45,
             'Transfer WIPAC': 60, 'Process Step 2': 75, 'Finish Step 2': 90, 'Complete': 100
         };
@@ -177,13 +262,75 @@
             return { background: gradient, border: '1px solid #999' };
         }
 
+        function calculateOverallProgress(events) {
+            if (events.length === 0) return 0;
+            
+            const totalProgress = events.reduce((sum, event) => {
+                const percent = workflowSteps[event.status] || 0;
+                return sum + percent;
+            }, 0);
+            
+            return Math.round(totalProgress / events.length);
+        }
+
+        function updateProgressBar(events) {
+            const overallProgress = calculateOverallProgress(events);
+            const progressFill = document.getElementById('progressBarFill');
+            progressFill.style.width = overallProgress + '%';
+            progressFill.innerText = overallProgress + '%';
+        }
+
+        function filterEventsByDateRange(events, startDate, endDate) {
+            const start = new Date(startDate);
+            const end = new Date(endDate);
+            end.setHours(23, 59, 59, 999); // Include entire end day
+            
+            return events.filter(event => {
+                const eventDate = new Date(event.date);
+                return eventDate >= start && eventDate <= end;
+            });
+        }
+
+        function openBulkUpdateModal(events) {
+            const modal = document.getElementById('bulkUpdateModal');
+            const eventsList = document.getElementById('bulkEventsList');
+            const statusSelect = document.getElementById('bulkStatusSelect');
+            
+            // Display events
+            eventsList.innerHTML = events.length === 0 
+                ? '<p style="color: #999; text-align: center;">No events found in this date range</p>'
+                : events.map(e => `<div style="padding: 8px; border-bottom: 1px solid #eee;"><strong>${e.title}</strong> (${new Date(e.date).toLocaleDateString()}) - Status: ${e.status}</div>`).join('');
+            
+            // Populate status dropdown
+            statusSelect.innerHTML = '';
+            const allOptions = Object.keys(workflowSteps).concat(['Step 1 Error', 'Step 2 Error']);
+            allOptions.forEach(opt => {
+                const option = document.createElement('option');
+                option.value = opt;
+                option.text = opt;
+                statusSelect.appendChild(option);
+            });
+            
+            document.getElementById('bulkModalTitle').innerText = `Found ${events.length} event(s)`;
+            modal.style.display = 'block';
+            
+            // Store events for apply operation
+            modal.dataset.events = JSON.stringify(events);
+        }
+
         var calendar = new FullCalendar.Calendar(calendarEl, {
           initialView: 'dayGridMonth',
           height: 'auto',
           headerToolbar: {
             left: 'prev,next today', center: 'title', right: 'dayGridMonth,listMonth' 
           },
-          events: '/api/events', 
+          events: {
+            url: '/api/events',
+            success: function(events) {
+              updateProgressBar(events);
+              return events;
+            }
+          }, 
 
           eventDidMount: function(info) {
             const status = info.event.extendedProps.status;
@@ -254,7 +401,12 @@
                             if(newStatus.toLowerCase().includes('error')) badge.style.backgroundColor = colors.error;
                             else if(newStatus === 'Complete') badge.style.backgroundColor = colors.complete;
                             else badge.style.backgroundColor = colors.progress;
-                            calendar.render(); 
+                            calendar.render();
+                            
+                            // Refresh progress bar
+                            fetch('/api/events').then(r => r.json()).then(events => {
+                                updateProgressBar(events);
+                            });
                         }
                     });
                 };
@@ -303,6 +455,67 @@
             alert("Logged out.");
         };
 
+        // 4. Bulk Update by Date Range
+        document.getElementById('bulkSearchBtn').onclick = function() {
+            const startDate = document.getElementById('bulkStartDate').value;
+            const endDate = document.getElementById('bulkEndDate').value;
+            
+            if (!startDate || !endDate) {
+                alert("Please select both start and end dates");
+                return;
+            }
+            
+            fetch('/api/events').then(r => r.json()).then(events => {
+                const filtered = filterEventsByDateRange(events, startDate, endDate);
+                if (filtered.length === 0) {
+                    alert("No events found in this date range");
+                } else {
+                    openBulkUpdateModal(filtered);
+                }
+            });
+        };
+
+        // 5. Apply Bulk Update
+        document.getElementById('bulkApplyBtn').onclick = function() {
+            const modal = document.getElementById('bulkUpdateModal');
+            const events = JSON.parse(modal.dataset.events || '[]');
+            const newStatus = document.getElementById('bulkStatusSelect').value;
+            
+            if (events.length === 0) {
+                alert("No events selected");
+                return;
+            }
+            
+            const bulkApplyBtn = document.getElementById('bulkApplyBtn');
+            bulkApplyBtn.disabled = true;
+            bulkApplyBtn.innerText = 'Updating...';
+            
+            // Use bulk endpoint for efficiency - single GitHub push for all updates
+            fetch('/api/events/bulk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    titles: events.map(e => e.title),
+                    new_status: newStatus 
+                })
+            }).then(res => res.json()).then(response => {
+                modal.style.display = 'none';
+                bulkApplyBtn.disabled = false;
+                bulkApplyBtn.innerText = 'Apply to All';
+                
+                alert(`Updated ${events.length} event(s) to "${newStatus}"`);
+                
+                calendar.refetchEvents();
+                fetch('/api/events').then(r => r.json()).then(events => {
+                    updateProgressBar(events);
+                });
+            }).catch(() => {
+                bulkApplyBtn.disabled = false;
+                bulkApplyBtn.innerText = 'Apply to All';
+                alert("Error updating events. Please try again.");
+            });
+        };
+
         // Close Buttons for Modals
         document.querySelectorAll('.close').forEach(el => {
             el.onclick = function() {
@@ -328,7 +541,25 @@
     </div>
 
     <div id="calendar-container">
-        <h1>Workflow Schedule</h1>
+        <h1>Pass 3 Status</h1>
+
+        <div class="progress-section">
+            <div class="progress-label">Overall Progress</div>
+            <div class="progress-bar-container">
+                <div class="progress-bar-fill" id="progressBarFill" style="width: 0%;">0%</div>
+            </div>
+        </div>
+
+        <div class="bulk-update-section" id="bulkUpdateSection">
+            <div style="margin-bottom: 15px; font-weight: bold; color: #2c3e50;">Bulk Update Events by Date Range</div>
+            <div class="date-range-inputs">
+                <label>From:</label>
+                <input type="date" id="bulkStartDate">
+                <label>To:</label>
+                <input type="date" id="bulkEndDate">
+                <button class="bulk-btn" id="bulkSearchBtn">Find Events</button>
+            </div>
+        </div>
 
         <div class="legend">
             <div class="legend-item"><span class="dot" style="background-color: #e9ecef; border: 1px solid #ccc;"></span>Pending</div>
@@ -368,6 +599,19 @@
             <input type="password" id="passwordInput" placeholder="Password" style="padding: 10px; width: 80%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px;">
             <br>
             <button id="doLoginBtn" style="padding: 10px 20px; background: #2c3e50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Submit</button>
+        </div>
+    </div>
+
+    <div id="bulkUpdateModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2 id="bulkModalTitle">Events Found</h2>
+            <div id="bulkEventsList" style="max-height: 300px; overflow-y: auto; margin: 15px 0; padding: 10px; background: #f9f9f9; border-radius: 4px; border: 1px solid #ddd;"></div>
+            <div style="margin: 15px 0; padding: 15px; background: #f9f9f9; border-radius: 8px;">
+                <label style="font-weight: bold; display: block; margin-bottom: 8px;">Update all to:</label>
+                <select id="bulkStatusSelect" style="padding: 8px; width: 100%; border: 1px solid #ccc; border-radius: 4px; font-size: 0.95em;"></select>
+            </div>
+            <button id="bulkApplyBtn" class="btn" style="margin-top: 15px;">Apply to All</button>
         </div>
     </div>
 

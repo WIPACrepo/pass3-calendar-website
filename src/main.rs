@@ -13,10 +13,15 @@ use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 
 #[tokio::main]
 async fn main() {
+    // Require ADMIN_PASSWORD to be set - fail fast if not configured
+    let _admin_password = env::var("ADMIN_PASSWORD")
+        .expect("ADMIN_PASSWORD environment variable must be set");
+
     // FIX 1: Removed semicolon after the first route so the chain continues
     let app = Router::new()
         .route_service("/", ServeFile::new("index.html"))
         .route("/api/events", get(get_events).post(update_event)) 
+        .route("/api/events/bulk", post(bulk_update_events))
         .route("/api/login", post(login_handler)); 
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 80));
@@ -42,6 +47,12 @@ struct Event {
 #[derive(Deserialize)]
 struct UpdatePayload {
     title: String,
+    new_status: String,
+}
+
+#[derive(Deserialize)]
+struct BulkUpdatePayload {
+    titles: Vec<String>,
     new_status: String,
 }
 
@@ -74,9 +85,10 @@ async fn login_handler(
     jar: CookieJar, 
     ExtractJson(payload): ExtractJson<LoginPayload>
 ) -> impl IntoResponse {
-    if payload.password == "secret123" {
-        // FIX 2: Passed arguments separately: "session", "admin_authorized"
-        // FIX 3: Used .finish() instead of .build()
+    // ADMIN_PASSWORD is guaranteed to be set (checked in main)
+    let actual_pass = env::var("ADMIN_PASSWORD").unwrap();
+
+    if payload.password == actual_pass {
         let cookie = Cookie::build("session", "admin_authorized")
             .path("/")
             .http_only(false)
@@ -123,6 +135,42 @@ async fn update_event(
     }
 
     (StatusCode::OK, Json("Updated".to_string()))
+}
+
+async fn bulk_update_events(
+    jar: CookieJar,
+    ExtractJson(payload): ExtractJson<BulkUpdatePayload>
+) -> impl IntoResponse {
+    
+    // Check for cookie
+    if jar.get("session").map(|c| c.value()) != Some("admin_authorized") {
+        return (StatusCode::UNAUTHORIZED, Json("Please Log In First".to_string()));
+    }
+
+    let path = "events.json";
+    let data = fs::read_to_string(path).unwrap_or_else(|_| "[]".to_string());
+    let mut events: Vec<Event> = serde_json::from_str(&data).unwrap_or(vec![]);
+
+    let mut updated_count = 0;
+    for event in &mut events {
+        if payload.titles.contains(&event.title) {
+            event.status = payload.new_status.clone();
+            updated_count += 1;
+        }
+    }
+
+    if updated_count > 0 {
+        let new_json = serde_json::to_string_pretty(&events).unwrap();
+        fs::write(path, &new_json).expect("Failed to write local file");
+
+        tokio::spawn(async move {
+            if let Err(e) = push_to_github(new_json).await {
+                eprintln!("Failed to sync with GitHub: {}", e);
+            }
+        });
+    }
+
+    (StatusCode::OK, Json(format!("Updated {} events", updated_count)))
 }
 
 async fn push_to_github(json_content: String) -> Result<(), Box<dyn std::error::Error>> {
