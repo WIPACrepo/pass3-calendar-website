@@ -13,3 +13,7 @@ tower-http = { version = "0.4", features = ["fs"] }
 reqwest = { version = "0.11", features = ["json"] }
 base64 = "0.21"
 axum-extra = { version = "0.7", features = ["cookie"] }
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "chrono"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
