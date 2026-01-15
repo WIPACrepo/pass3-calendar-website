@@ -58,7 +58,14 @@ EOF
 fi
 
 # Build and run
-cargo build --bin setup_db --release 2>/dev/null || cargo build --bin setup_db
-./target/debug/setup_db
+echo "Building setup_db binary..."
+$HOME/.cargo/bin/cargo build --bin setup_db
+
+if [ -f "./target/debug/setup_db" ]; then
+    ./target/debug/setup_db
+else
+    echo "Error: Failed to build setup_db binary"
+    exit 1
+fi
 
 echo "Done!"
