@@ -1,6 +1,5 @@
 use sqlx::postgres::PgPoolOptions;
 use serde::Deserialize;
-use std::env;
 use std::path::Path;
 use clap::Parser;
 
@@ -20,6 +19,26 @@ struct Args {
     /// Skip running database migrations (use if schema already exists)
     #[arg(long)]
     skip_migrations: bool,
+
+    /// Database user
+    #[arg(long, default_value = "postgres")]
+    db_user: String,
+
+    /// Database password
+    #[arg(long, default_value = "postgres")]
+    db_password: String,
+
+    /// Database host
+    #[arg(long, default_value = "localhost")]
+    db_host: String,
+
+    /// Database port
+    #[arg(long, default_value = "5432")]
+    db_port: String,
+
+    /// Database name
+    #[arg(long, default_value = "calendar")]
+    db_name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -59,18 +78,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     
-    let db_user = env::var("DB_USER").unwrap_or_else(|_| "postgres".to_string());
-    let db_password = env::var("DB_PASSWORD").unwrap_or_else(|_| "postgres".to_string());
-    let db_host = env::var("DB_HOST").unwrap_or_else(|_| "localhost".to_string());
-    let db_port = env::var("DB_PORT").unwrap_or_else(|_| "5432".to_string());
-    let db_name = env::var("DB_NAME").unwrap_or_else(|_| "calendar".to_string());
-
     let database_url = format!(
         "postgres://{}:{}@{}:{}/{}",
-        db_user, db_password, db_host, db_port, db_name
+        args.db_user, args.db_password, args.db_host, args.db_port, args.db_name
     );
 
-    println!("Connecting to database at {}:{}...", db_host, db_port);
+    println!("Connecting to database at {}:{}...", args.db_host, args.db_port);
 
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -97,13 +110,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     } else {
         println!("\n✓ Blank database setup complete!");
-        println!("Database is ready at {}:{}/{}", db_host, db_port, db_name);
+        println!("Database is ready at {}:{}/{}", args.db_host, args.db_port, args.db_name);
         println!("\nTo import runs from CSV, provide the file path:");
         println!("  cargo run --bin setup_db -- --grl-csv <path_to_csv>");
         println!("\nTo validate CSV without importing:");
         println!("  cargo run --bin setup_db -- --dry-run --grl-csv <path_to_csv>");
         println!("\nTo skip migrations (if schema already exists):");
         println!("  cargo run --bin setup_db -- --skip-migrations --grl-csv <path_to_csv>");
+        println!("\nTo use custom database connection:");
+        println!("  cargo run --bin setup_db -- --db-host myhost --db-user myuser --db-password mypass --db-name mydb");
     }
 
     Ok(())
