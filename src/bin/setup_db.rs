@@ -213,7 +213,7 @@ async fn import_runs_from_csv(
         .bind(run_start_date)
         .bind(run_end_date)
         .bind("Not Yet Started") // default state
-        .bind("") // empty url
+        .bind(format!("https://live.icecube.wisc.edu/run/{}", record.run_number)) // url
         .execute(pool)
         .await {
             Ok(_) => {
