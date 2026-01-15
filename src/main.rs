@@ -3,15 +3,17 @@ use axum::{
     Router,
     response::{Json, IntoResponse},
     extract::{Json as ExtractJson, State, Path},
-    http::StatusCode,
+    http::{StatusCode, HeaderMap},
 };
 use std::{net::SocketAddr, env, sync::Arc};
 use serde::{Deserialize, Serialize};
 use tower_http::services::ServeFile;
-use base64::{Engine as _, engine::general_purpose};
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use uuid::Uuid;
+use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
 
 #[tokio::main]
 async fn main() {
@@ -49,6 +51,7 @@ async fn main() {
         .route("/api/runs/:run_number/state", post(update_run_state))
         .route("/api/steps", post(update_step))
         .route("/api/login", post(login_handler))
+        .route("/api/files/upload", post(upload_files))
         .with_state(app_state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 80));
@@ -161,16 +164,118 @@ struct LoginPayload {
     password: String,
 }
 
-#[derive(Deserialize, Debug)]
-struct GitHubFileResponse { 
-    sha: String 
+#[derive(Deserialize)]
+struct UploadFilesPayload {
+    run_number: i32,
+    stage: String,  // "raw", "step1", or "step2"
+    files: Vec<FileEntry>,
 }
 
-#[derive(Serialize)]
-struct GitHubUpdatePayload {
-    message: String,
-    content: String,
-    sha: String,
+#[derive(Deserialize)]
+struct FileEntry {
+    file_path: String,
+    sha512: String,
+}
+
+// --- KEYCLOAK / OIDC TYPES ---
+
+#[derive(Debug, Clone, Deserialize)]
+struct KeycloakJwk {
+    kid: String,
+    kty: String,
+    r#use: String,
+    n: String,
+    e: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct KeycloakJwks {
+    keys: Vec<KeycloakJwk>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct TokenClaims {
+    sub: String,
+    preferred_username: Option<String>,
+    scope: Option<String>,
+    #[serde(default)]
+    resource_access: std::collections::HashMap<String, ResourceAccess>,
+    exp: i64,
+    iat: i64,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct ResourceAccess {
+    roles: Vec<String>,
+}
+
+// Global cache for JWKS
+static JWKS_CACHE: Lazy<Mutex<Option<KeycloakJwks>>> = Lazy::new(|| Mutex::new(None));
+
+async fn fetch_keycloak_jwks() -> Result<KeycloakJwks, Box<dyn std::error::Error>> {
+    // Check cache first
+    if let Ok(cache) = JWKS_CACHE.lock() {
+        if let Some(jwks) = cache.as_ref() {
+            return Ok(jwks.clone());
+        }
+    }
+
+    // Fetch from Keycloak
+    let keycloak_url = env::var("KEYCLOAK_URL")?;
+    let realm = env::var("KEYCLOAK_REALM")?;
+    let jwks_url = format!("{}/realms/{}/protocol/openid-connect/certs", keycloak_url, realm);
+
+    let client = reqwest::Client::new();
+    let response = client.get(&jwks_url).send().await?;
+    let jwks: KeycloakJwks = response.json().await?;
+
+    // Cache it
+    if let Ok(mut cache) = JWKS_CACHE.lock() {
+        *cache = Some(jwks.clone());
+    }
+
+    Ok(jwks)
+}
+
+fn find_key<'a>(kid: &str, jwks: &'a KeycloakJwks) -> Option<&'a KeycloakJwk> {
+    jwks.keys.iter().find(|key| key.kid == kid)
+}
+
+async fn validate_oidc_token(token: &str) -> Result<TokenClaims, String> {
+    // Decode header to get kid
+    let header = decode_header(token)
+        .map_err(|e| format!("Invalid token header: {}", e))?;
+
+    let kid = header.kid
+        .ok_or_else(|| "Token missing 'kid' in header".to_string())?;
+
+    // Fetch JWKS
+    let jwks = fetch_keycloak_jwks()
+        .await
+        .map_err(|e| format!("Failed to fetch JWKS: {}", e))?;
+
+    // Find the key
+    let jwk = find_key(&kid, &jwks)
+        .ok_or_else(|| format!("Key '{}' not found in JWKS", kid))?;
+
+    // Convert JWK to decoding key
+    let decoding_key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e)
+        .map_err(|e| format!("Invalid RSA key: {}", e))?;
+
+    // Decode and validate token
+    let keycloak_url = env::var("KEYCLOAK_URL")
+        .map_err(|e| format!("KEYCLOAK_URL not set: {}", e))?;
+    let realm = env::var("KEYCLOAK_REALM")
+        .map_err(|e| format!("KEYCLOAK_REALM not set: {}", e))?;
+    let iss = format!("{}/realms/{}", keycloak_url, realm);
+
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.set_issuer(&[&iss]);
+
+    let token_data = decode::<TokenClaims>(token, &decoding_key, &validation)
+        .map_err(|e| format!("Token validation failed: {}", e))?;
+
+    Ok(token_data.claims)
 }
 
 // --- HANDLERS ---
@@ -312,66 +417,79 @@ async fn login_handler(
     }
 }
 
-async fn push_to_github_event(run: &Run) -> Result<(), Box<dyn std::error::Error>> {
-    let client = reqwest::Client::new();
-    let token = env::var("GITHUB_TOKEN")?; 
-    let owner = env::var("REPO_OWNER")?; 
-    let repo = env::var("REPO_NAME")?;   
-    let file_path = "runs.json";       
-    let url = format!("https://api.github.com/repos/{}/{}/contents/{}", owner, repo, file_path);
-
-    let resp = client.get(&url)
-        .header("User-Agent", "rust-app")
-        .header("Authorization", format!("Bearer {}", token))
-        .send().await?.json::<GitHubFileResponse>().await?;
-
-    let json_content = serde_json::to_string(&vec![run])?;
-    let encoded_content = general_purpose::STANDARD.encode(json_content);
-
-    let body = GitHubUpdatePayload {
-        message: format!("Update run {} state to {} via Web Dashboard", run.run_number, run.state),
-        content: encoded_content,
-        sha: resp.sha,
+async fn upload_files(
+    State(pool): State<Arc<PgPool>>,
+    headers: HeaderMap,
+    ExtractJson(payload): ExtractJson<UploadFilesPayload>
+) -> impl IntoResponse {
+    // Extract Bearer token from Authorization header
+    let token = match headers.get("Authorization") {
+        Some(h) => match h.to_str() {
+            Ok(s) => s.strip_prefix("Bearer ").unwrap_or(""),
+            Err(_) => return (StatusCode::UNAUTHORIZED, Json("Invalid Authorization header".to_string())).into_response(),
+        },
+        None => return (StatusCode::UNAUTHORIZED, Json("Missing Authorization header".to_string())).into_response(),
     };
 
-    client.put(&url)
-        .header("User-Agent", "rust-app")
-        .header("Authorization", format!("Bearer {}", token))
-        .json(&body)
-        .send().await?;
-
-    Ok(())
-}
-
-async fn push_to_github_events(runs: &[Run]) -> Result<(), Box<dyn std::error::Error>> {
-    let client = reqwest::Client::new();
-    let token = env::var("GITHUB_TOKEN")?; 
-    let owner = env::var("REPO_OWNER")?; 
-    let repo = env::var("REPO_NAME")?;   
-    let file_path = "runs.json";       
-    let url = format!("https://api.github.com/repos/{}/{}/contents/{}", owner, repo, file_path);
-
-    let resp = client.get(&url)
-        .header("User-Agent", "rust-app")
-        .header("Authorization", format!("Bearer {}", token))
-        .send().await?.json::<GitHubFileResponse>().await?;
-
-    let json_content = serde_json::to_string(&runs)?;
-    let encoded_content = general_purpose::STANDARD.encode(json_content);
-
-    let body = GitHubUpdatePayload {
-        message: "Bulk update runs state via Web Dashboard".to_string(),
-        content: encoded_content,
-        sha: resp.sha,
+    // Validate OIDC token
+    let claims = match validate_oidc_token(token).await {
+        Ok(c) => c,
+        Err(e) => return (StatusCode::UNAUTHORIZED, Json(format!("Token validation failed: {}", e))).into_response(),
     };
 
-    client.put(&url)
-        .header("User-Agent", "rust-app")
-        .header("Authorization", format!("Bearer {}", token))
-        .json(&body)
-        .send().await?;
+    // Validate stage
+    if !["raw", "step1", "step2"].contains(&payload.stage.as_str()) {
+        return (StatusCode::BAD_REQUEST, Json("Invalid stage. Must be 'raw', 'step1', or 'step2'".to_string())).into_response();
+    }
 
-    Ok(())
+    // Verify run exists
+    let run_exists: bool = match sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM runs WHERE run_number = $1)")
+        .bind(payload.run_number)
+        .fetch_one(pool.as_ref())
+        .await {
+        Ok(exists) => exists,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, Json("Database error".to_string())).into_response(),
+    };
+
+    if !run_exists {
+        return (StatusCode::NOT_FOUND, Json(format!("Run {} not found", payload.run_number))).into_response();
+    }
+
+    // Insert files into run_files table
+    let mut inserted = 0;
+    let mut failed = 0;
+
+    for file in payload.files {
+        match sqlx::query(
+            "INSERT INTO run_files (id, run_number, stage, file_path, sha512) VALUES ($1, $2, $3, $4, $5)"
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(payload.run_number)
+        .bind(&payload.stage)
+        .bind(&file.file_path)
+        .bind(&file.sha512)
+        .execute(pool.as_ref())
+        .await {
+            Ok(_) => inserted += 1,
+            Err(e) => {
+                eprintln!("Failed to insert file {}: {}", file.file_path, e);
+                failed += 1;
+            }
+        }
+    }
+
+    #[derive(Serialize)]
+    struct UploadResponse {
+        inserted: i32,
+        failed: i32,
+        user: String,
+    }
+
+    (StatusCode::OK, Json(UploadResponse { 
+        inserted, 
+        failed,
+        user: claims.preferred_username.unwrap_or_else(|| claims.sub),
+    })).into_response()
 }
 
 async fn migrate_json_to_db(pool: &PgPool) {
