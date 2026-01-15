@@ -206,7 +206,7 @@ async fn import_runs_from_csv(
         // Insert into runs table
         match sqlx::query(
             "INSERT INTO runs (run_number, run_start_date, run_end_date, state, url) 
-             VALUES ($1, $2, $3, $4, $5)
+             VALUES ($1, $2, $3, $4::workflow_state, $5)
              ON CONFLICT (run_number) DO UPDATE SET state = EXCLUDED.state, url = EXCLUDED.url"
         )
         .bind(record.run_number)
