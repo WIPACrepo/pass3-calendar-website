@@ -1,5 +1,5 @@
 use clap::{Parser, ArgGroup};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sqlx::postgres::PgPoolOptions;
 use std::collections::HashMap;
 use std::fs::File;
@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use uuid::Uuid;
 use regex::Regex;
-use pass3_calendar_website::{NdJsonFileRecord, Step1FileRecord, Stage, insert_file, Checksum, RunInfo};
+use pass3_calendar_website::{NdJsonFileRecord, Step1FileRecord, Stage, insert_file};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -30,7 +30,7 @@ struct Args {
     gcd_dir: Option<String>,
 
     /// Stage for GCD files: "step1" or "step2"
-    #[arg(long, required_if_present = "gcd_dir")]
+    #[arg(long, requires = "gcd_dir")]
     gcd_stage: Option<String>,
 
     /// Database user
