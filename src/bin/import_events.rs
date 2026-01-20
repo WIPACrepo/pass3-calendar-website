@@ -14,7 +14,7 @@ use pass3_calendar_website::{NdJsonFileRecord, Step1FileRecord, Stage, insert_fi
 #[command(group(
     ArgGroup::new("input")
         .required(true)
-        .args(["pfraw_file_ndjson", "step1_file_json"]),
+        .args(["pfraw_file_ndjson", "step1_file_json", "gcd_dir"]),
 ))]
 struct Args {
     /// Path to the PFRaw ndjson file to import
@@ -24,6 +24,14 @@ struct Args {
     /// Path to the Step 1 JSON file to import
     #[arg(long)]
     step1_file_json: Option<String>,
+
+    /// Path to directory containing GCD files
+    #[arg(long)]
+    gcd_dir: Option<String>,
+
+    /// Stage for GCD files: "step1" or "step2"
+    #[arg(long, required_if_present = "gcd_dir")]
+    gcd_stage: Option<String>,
 
     /// Database user
     #[arg(long)]
@@ -144,6 +152,78 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+    } else if let Some(gcd_dir_path) = args.gcd_dir {
+        println!("Importing GCD files from directory: {}", gcd_dir_path);
+        
+        let stage = match args.gcd_stage.as_deref() {
+            Some("step1") => Stage::Step1,
+            Some("step2") => Stage::Step2,
+            Some("raw") => Stage::RawData,
+            _ => {
+                eprintln!("Invalid stage '{}'. Must be 'step1', 'step2', or 'raw'", args.gcd_stage.unwrap_or_default());
+                return Ok(());
+            }
+        };
+
+        // Regex to extract run number from GCD filename
+        // Pattern: OnlinePass3_IC86.2019_data_Run00133574_78_503_GCD.i3.zst
+        let re = Regex::new(r"Run(\d+)_").unwrap();
+
+        let dir = std::fs::read_dir(&gcd_dir_path)?;
+        
+        for entry in dir {
+            let entry = entry?;
+            let path = entry.path();
+            
+            // Skip if not a file or doesn't have GCD in name
+            if !path.is_file() {
+                continue;
+            }
+            
+            let filename = path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            
+            if !filename.contains("GCD") || !filename.ends_with(".i3.zst") {
+                continue;
+            }
+
+            // Extract run number
+            let run_number = if let Some(caps) = re.captures(filename) {
+                caps[1].parse::<i32>().unwrap_or(0)
+            } else {
+                println!("Skipping file '{}': Could not parse run number", filename);
+                skipped += 1;
+                continue;
+            };
+
+            // Get absolute path
+            let absolute_path = path.canonicalize()
+                .unwrap_or(path.clone())
+                .to_string_lossy()
+                .to_string();
+
+            // Compute SHA512
+            let sha512 = match compute_sha512(&path) {
+                Ok(hash) => hash,
+                Err(e) => {
+                    println!("Error computing SHA512 for '{}': {}", filename, e);
+                    skipped += 1;
+                    continue;
+                }
+            };
+
+            // Insert GCD file
+            if let Err(e) = insert_gcd_file(&pool, run_number, stage, &absolute_path, &sha512).await {
+                println!("Error importing GCD file for run {}: {}", run_number, e);
+                skipped += 1;
+            } else {
+                imported += 1;
+                if imported % 10 == 0 { 
+                    println!("Imported {} GCD files...", imported); 
+                }
+            }
+        }
     }
 
     println!("\n=== Import Complete ===");
@@ -153,4 +233,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Compute SHA512 hash of a file
+fn compute_sha512(path: &Path) -> Result<String, std::io::Error> {
+    use sha2::{Sha512, Digest};
+    
+    let mut file = File::open(path)?;
+    let mut hasher = Sha512::new();
+    std::io::copy(&mut file, &mut hasher)?;
+    let hash = hasher.finalize();
+    Ok(format!("{:x}", hash))
+}
 
+/// Insert a GCD file into the database
+async fn insert_gcd_file(
+    pool: &sqlx::PgPool,
+    run_number: i32,
+    stage: Stage,
+    location: &str,
+    sha512: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO gcd_files (id, run_number, stage, location, sha512) VALUES ($1, $2, $3::stage, $4, $5)
+         ON CONFLICT (run_number, stage) DO UPDATE SET location = EXCLUDED.location, sha512 = EXCLUDED.sha512, updated_at = CURRENT_TIMESTAMP"
+    )
+    .bind(Uuid::new_v4())
+    .bind(run_number)
+    .bind(stage)
+    .bind(location)
+    .bind(sha512)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
