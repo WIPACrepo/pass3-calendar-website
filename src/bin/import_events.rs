@@ -1,5 +1,4 @@
 use clap::{Parser, ArgGroup};
-use serde::Deserialize;
 use sqlx::postgres::PgPoolOptions;
 use std::collections::HashMap;
 use std::fs::File;
