@@ -212,6 +212,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
+            // Check if this GCD file already exists (by SHA512)
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM gcd_files WHERE sha512 = $1)"
+            )
+            .bind(&sha512)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(false);
+
+            if exists {
+                println!("Skipping file '{}': GCD file with same SHA512 already exists", filename);
+                skipped += 1;
+                continue;
+            }
+
             // Insert GCD file
             if let Err(e) = insert_gcd_file(&pool, run_number, stage, &absolute_path, &sha512).await {
                 println!("Error importing GCD file for run {}: {}", run_number, e);
