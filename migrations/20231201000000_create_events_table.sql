@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS gcd_files (
     run_number INT NOT NULL,
     stage stage NOT NULL,
     location TEXT NOT NULL,
+    sha512 CHAR(128) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (run_number) REFERENCES runs(run_number) ON DELETE CASCADE,

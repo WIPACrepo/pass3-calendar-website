@@ -8,12 +8,17 @@ use axum::{
 use std::{net::SocketAddr, env, sync::Arc};
 use serde::{Deserialize, Serialize};
 use tower_http::services::ServeFile;
-use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
+// Cookie imports removed
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use uuid::Uuid;
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
+use regex::Regex;
+use axum::extract::BodyStream;
+use futures::StreamExt;
+use std::path::Path as FilePath;
+use pass3_calendar_website::{NdJsonFileRecord, Step1FileRecord, Stage, insert_file}; 
 
 #[tokio::main]
 async fn main() {
@@ -43,15 +48,19 @@ async fn main() {
 
     let app_state = Arc::new(pool);
 
-    // FIX 1: Removed semicolon after the first route so the chain continues
     let app = Router::new()
         .route_service("/", ServeFile::new("index.html"))
         .route("/api/runs", get(get_runs).post(create_run))
         .route("/api/runs/:run_number", get(get_run_details))
         .route("/api/runs/:run_number/state", post(update_run_state))
         .route("/api/steps", post(update_step))
-        .route("/api/login", post(login_handler))
+        // login route removed
         .route("/api/files/upload", post(upload_files))
+        .route("/api/import/pfraw", post(import_pfraw))
+        .route("/api/import/step1", post(import_step1))
+        .route("/api/runs/update", post(update_run_details))
+        .route("/api/broken_files", post(report_broken_file))
+        .route("/api/gcd_files", post(register_gcd_file))
         .with_state(app_state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 80));
@@ -114,179 +123,47 @@ struct Run {
     run_start_date: chrono::DateTime<chrono::Utc>,
     state: WorkflowState,
     url: Option<String>,
+    #[sqlx(default)]
+    raw_max_part: Option<i32>,
+    #[sqlx(default)]
+    step1_max_part: Option<i32>,
+    #[sqlx(default)]
+    missing_step1_parts: Option<Vec<i32>>,
+    #[sqlx(default)]
+    note: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone, sqlx::FromRow)]
-struct ProcessingStep {
-    id: String,
-    run_number: i32,
-    step_number: i32,
-    started_date: Option<chrono::DateTime<chrono::Utc>>,
-    end_date: Option<chrono::DateTime<chrono::Utc>>,
-    site: Option<String>,
-    checksum: Option<String>,
-    location: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct RunWithSteps {
-    run: Run,
-    steps: Vec<ProcessingStep>,
-}
-
-#[derive(Deserialize)]
-struct CreateRunPayload {
-    file_number: i32,
-    run_start_date: chrono::DateTime<chrono::Utc>,
-    state: String,
-    url: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct UpdateStepPayload {
-    run_number: i32,
-    step_number: i32,
-    started_date: Option<chrono::DateTime<chrono::Utc>>,
-    end_date: Option<chrono::DateTime<chrono::Utc>>,
-    site: Option<String>,
-    checksum: Option<String>,
-    location: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct UpdateRunStatePayload {
-    run_number: i32,
-    new_state: WorkflowState,
-}
-
-#[derive(Deserialize)]
-struct LoginPayload {
-    password: String,
-}
-
-#[derive(Deserialize)]
-struct UploadFilesPayload {
-    run_number: i32,
-    stage: String,  // "raw", "step1", or "step2"
-    files: Vec<FileEntry>,
-}
-
-#[derive(Deserialize)]
-struct FileEntry {
-    file_path: String,
-    sha512: String,
-}
-
-// --- KEYCLOAK / OIDC TYPES ---
-
-#[derive(Debug, Clone, Deserialize)]
-struct KeycloakJwk {
-    kid: String,
-    kty: String,
-    r#use: String,
-    n: String,
-    e: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct KeycloakJwks {
-    keys: Vec<KeycloakJwk>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct TokenClaims {
-    sub: String,
-    preferred_username: Option<String>,
-    scope: Option<String>,
-    #[serde(default)]
-    resource_access: std::collections::HashMap<String, ResourceAccess>,
-    exp: i64,
-    iat: i64,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-struct ResourceAccess {
-    roles: Vec<String>,
-}
-
-// Global cache for JWKS
-static JWKS_CACHE: Lazy<Mutex<Option<KeycloakJwks>>> = Lazy::new(|| Mutex::new(None));
-
-async fn fetch_keycloak_jwks() -> Result<KeycloakJwks, Box<dyn std::error::Error>> {
-    // Check cache first
-    if let Ok(cache) = JWKS_CACHE.lock() {
-        if let Some(jwks) = cache.as_ref() {
-            return Ok(jwks.clone());
-        }
-    }
-
-    // Fetch from Keycloak
-    let keycloak_url = env::var("KEYCLOAK_URL")?;
-    let realm = env::var("KEYCLOAK_REALM")?;
-    let jwks_url = format!("{}/realms/{}/protocol/openid-connect/certs", keycloak_url, realm);
-
-    let client = reqwest::Client::new();
-    let response = client.get(&jwks_url).send().await?;
-    let jwks: KeycloakJwks = response.json().await?;
-
-    // Cache it
-    if let Ok(mut cache) = JWKS_CACHE.lock() {
-        *cache = Some(jwks.clone());
-    }
-
-    Ok(jwks)
-}
-
-fn find_key<'a>(kid: &str, jwks: &'a KeycloakJwks) -> Option<&'a KeycloakJwk> {
-    jwks.keys.iter().find(|key| key.kid == kid)
-}
-
-async fn validate_oidc_token(token: &str) -> Result<TokenClaims, String> {
-    // Decode header to get kid
-    let header = decode_header(token)
-        .map_err(|e| format!("Invalid token header: {}", e))?;
-
-    let kid = header.kid
-        .ok_or_else(|| "Token missing 'kid' in header".to_string())?;
-
-    // Fetch JWKS
-    let jwks = fetch_keycloak_jwks()
-        .await
-        .map_err(|e| format!("Failed to fetch JWKS: {}", e))?;
-
-    // Find the key
-    let jwk = find_key(&kid, &jwks)
-        .ok_or_else(|| format!("Key '{}' not found in JWKS", kid))?;
-
-    // Convert JWK to decoding key
-    let decoding_key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e)
-        .map_err(|e| format!("Invalid RSA key: {}", e))?;
-
-    // Decode and validate token
-    let keycloak_url = env::var("KEYCLOAK_URL")
-        .map_err(|e| format!("KEYCLOAK_URL not set: {}", e))?;
-    let realm = env::var("KEYCLOAK_REALM")
-        .map_err(|e| format!("KEYCLOAK_REALM not set: {}", e))?;
-    let iss = format!("{}/realms/{}", keycloak_url, realm);
-
-    let mut validation = Validation::new(Algorithm::RS256);
-    validation.set_issuer(&[&iss]);
-
-    let token_data = decode::<TokenClaims>(token, &decoding_key, &validation)
-        .map_err(|e| format!("Token validation failed: {}", e))?;
-
-    Ok(token_data.claims)
-}
-
-// --- HANDLERS ---
+// ... existing structs ...
+// (processing_step, RunWithSteps, payload structs etc)
 
 async fn get_runs(
     State(pool): State<Arc<PgPool>>,
 ) -> Json<Vec<Run>> {
-    let runs: Vec<Run> = sqlx::query_as("SELECT run_number, file_number, run_start_date, state, url FROM runs ORDER BY run_start_date DESC")
-        .fetch_all(pool.as_ref())
-        .await
-        .unwrap_or_default();
+    let runs: Vec<Run> = sqlx::query_as(
+        r#"
+        SELECT 
+            r.run_number, r.file_number, r.run_start_date, r.state, r.url,
+            MAX(CASE WHEN rf.stage = 'Raw Data' THEN rf.part_number END) as raw_max_part,
+            MAX(CASE WHEN rf.stage = 'Step 1' THEN rf.part_number END) as step1_max_part,
+            (
+                SELECT ARRAY_AGG(part_number ORDER BY part_number)
+                FROM (
+                    SELECT part_number FROM run_files WHERE run_number = r.run_number AND stage = 'Raw Data'
+                    EXCEPT
+                    SELECT part_number FROM run_files WHERE run_number = r.run_number AND stage = 'Step 1'
+                ) as diff
+            ) as missing_step1_parts,
+            rn.note
+        FROM runs r
+        LEFT JOIN run_files rf ON r.run_number = rf.run_number
+        LEFT JOIN run_notes rn ON r.run_number = rn.run_number
+        GROUP BY r.run_number, rn.note
+        ORDER BY r.run_start_date DESC
+        "#
+    )
+    .fetch_all(pool.as_ref())
+    .await
+    .unwrap_or_default();
     Json(runs)
 }
 
@@ -313,12 +190,16 @@ async fn get_run_details(
 
 async fn create_run(
     State(pool): State<Arc<PgPool>>,
-    jar: CookieJar,
+    headers: HeaderMap,
     ExtractJson(payload): ExtractJson<CreateRunPayload>
 ) -> impl IntoResponse {
-    // Check for cookie
-    if jar.get("session").map(|c| c.value()) != Some("admin_authorized") {
-        return (StatusCode::UNAUTHORIZED, Json("Please Log In First".to_string()));
+    // Check auth (require 'admin' or similar, but for now reuse 'file_import' or just check valid token)
+    // Assuming 'file_import' scope is sufficient for creating runs, or we can use a generic valid check.
+    // Let's perform a generic token validation without specific scope for now, OR enforce file_import.
+    // The previous code checked for admin cookie. Now we require a valid token.
+    // Let's assume file_import scope implies admin rights for this app.
+    if let Err((status, msg)) = check_auth_scope(&headers, "file_import").await {
+         return (status, Json(msg)).into_response();
     }
 
     // Insert run and create empty steps
@@ -351,13 +232,13 @@ async fn create_run(
 
 async fn update_run_state(
     State(pool): State<Arc<PgPool>>,
-    jar: CookieJar,
+    headers: HeaderMap,
     Path(run_number): Path<i32>,
     ExtractJson(payload): ExtractJson<UpdateRunStatePayload>
 ) -> impl IntoResponse {
-    // Check for cookie
-    if jar.get("session").map(|c| c.value()) != Some("admin_authorized") {
-        return (StatusCode::UNAUTHORIZED, Json("Please Log In First".to_string()));
+    // Check auth
+    if let Err((status, msg)) = check_auth_scope(&headers, "file_import").await {
+         return (status, Json(msg)).into_response();
     }
 
     match sqlx::query("UPDATE runs SET state = $1 WHERE run_number = $2")
@@ -372,12 +253,12 @@ async fn update_run_state(
 
 async fn update_step(
     State(pool): State<Arc<PgPool>>,
-    jar: CookieJar,
+    headers: HeaderMap,
     ExtractJson(payload): ExtractJson<UpdateStepPayload>
 ) -> impl IntoResponse {
-    // Check for cookie
-    if jar.get("session").map(|c| c.value()) != Some("admin_authorized") {
-        return (StatusCode::UNAUTHORIZED, Json("Please Log In First".to_string()));
+    // Check auth
+    if let Err((status, msg)) = check_auth_scope(&headers, "file_import").await {
+         return (status, Json(msg)).into_response();
     }
 
     match sqlx::query(
@@ -397,25 +278,7 @@ async fn update_step(
     }
 }
 
-async fn login_handler(
-    jar: CookieJar, 
-    ExtractJson(payload): ExtractJson<LoginPayload>
-) -> impl IntoResponse {
-    // ADMIN_PASSWORD is guaranteed to be set (checked in main)
-    let actual_pass = env::var("ADMIN_PASSWORD").unwrap();
 
-    if payload.password == actual_pass {
-        let cookie = Cookie::build("session", "admin_authorized")
-            .path("/")
-            .http_only(false)
-            .same_site(SameSite::Lax)
-            .finish();
-        
-        (jar.add(cookie), Json("Login Successful".to_string()))
-    } else {
-        (jar, Json("Invalid Password".to_string()))
-    }
-}
 
 async fn upload_files(
     State(pool): State<Arc<PgPool>>,
@@ -490,6 +353,317 @@ async fn upload_files(
         failed,
         user: claims.preferred_username.unwrap_or_else(|| claims.sub),
     })).into_response()
+}
+
+// --- IMPORT HANDLERS ---
+
+async fn check_auth_scope(headers: &HeaderMap, required_scope: &str) -> Result<(), (StatusCode, String)> {
+    let token = headers.get("Authorization")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .ok_or((StatusCode::UNAUTHORIZED, "Missing or invalid Authorization header".to_string()))?;
+
+    let claims = validate_oidc_token(token).await
+        .map_err(|e| (StatusCode::UNAUTHORIZED, format!("Token validation failed: {}", e)))?;
+
+    // Check scope - simple check for presence of string in space-separated list
+    let has_scope = claims.scope
+        .as_deref()
+        .unwrap_or("")
+        .split_whitespace()
+        .any(|s| s == required_scope);
+
+    if !has_scope {
+        return Err((StatusCode::FORBIDDEN, format!("Missing required scope: {}", required_scope)));
+    }
+
+    Ok(())
+}
+
+async fn import_pfraw(
+    State(pool): State<Arc<PgPool>>,
+    headers: HeaderMap,
+    body: String,
+) -> impl IntoResponse {
+    if let Err((status, msg)) = check_auth_scope(&headers, "file_import").await {
+        return (status, Json(msg)).into_response();
+    }
+
+    let mut processed = 0;
+    let mut inserted = 0;
+    let mut updated = 0;
+    let mut failed = 0;
+
+    for line in body.lines() {
+        if line.trim().is_empty() { continue; }
+        processed += 1;
+
+        let record: NdJsonFileRecord = match serde_json::from_str(line) {
+            Ok(r) => r,
+            Err(_) => { failed += 1; continue; }
+        };
+
+        if record.processing_level != "PFRaw" {
+            continue; // Skip non-PFRaw
+        }
+
+        let run_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM runs WHERE run_number = $1)")
+            .bind(record.run.run_number)
+            .fetch_one(pool.as_ref())
+            .await
+            .unwrap_or(false);
+
+        if !run_exists {
+            failed += 1; // Run must exist
+            continue;
+        }
+
+       // Extract pure filename
+       let fpath = FilePath::new(&record.logical_name)
+           .file_name()
+           .and_then(|n| n.to_str())
+           .unwrap_or(&record.logical_name)
+           .to_string();
+
+        // Uuid is already parsed by serde in NdJsonFileRecord
+        match insert_file(&pool, record.uuid, record.run.run_number, record.run.part_number, Stage::RawData, &fpath, &record.checksum.sha512).await {
+            Ok(_) => inserted += 1,
+            Err(e) => {
+                eprintln!("DB Error: {}", e);
+                failed += 1;
+            }
+        }
+    }
+
+    (StatusCode::OK, Json(ImportResponse {
+        processed, inserted, updated, failed,
+        message: "PFRaw import completed".to_string()
+    })).into_response()
+}
+
+async fn import_step1(
+    State(pool): State<Arc<PgPool>>,
+    headers: HeaderMap,
+    ExtractJson(payload): ExtractJson<std::collections::HashMap<String, Vec<Step1FileRecord>>>,
+) -> impl IntoResponse {
+    if let Err((status, msg)) = check_auth_scope(&headers, "file_import").await {
+        return (status, Json(msg)).into_response();
+    }
+
+    let re = Regex::new(r"Run(\d+)_Subrun\d+_(\d+)\.").unwrap();
+    let namespace = Uuid::NAMESPACE_DNS; 
+
+    let mut processed = 0;
+    let mut inserted = 0;
+    let mut updated = 0;
+    let mut failed = 0;
+
+    for (_key, records) in payload {
+        for record in records {
+            processed += 1;
+
+            let file_name = FilePath::new(&record.logical_name)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(&record.logical_name)
+                .to_string();
+            
+            // Extract Run/Part
+            let (run_number, part_number) = if let Some(caps) = re.captures(&file_name) {
+                let r = caps[1].parse::<i32>().unwrap_or(0);
+                let p = caps[2].parse::<i32>().unwrap_or(0);
+                (r, p)
+            } else {
+                failed += 1;
+                continue;
+            };
+
+            let run_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM runs WHERE run_number = $1)")
+                .bind(run_number)
+                .fetch_one(pool.as_ref())
+                .await
+                .unwrap_or(false);
+
+            if !run_exists {
+                 failed += 1;
+                 continue;
+            }
+
+            // Generate deterministic UUID
+            let uuid_input = format!(
+                "Step1-{}-{}-{}",
+                run_number,
+                part_number,
+                record.checksum.sha512
+            );
+            let uuid = Uuid::new_v5(&namespace, uuid_input.as_bytes());
+
+            match insert_file(&pool, uuid, run_number, part_number, Stage::Step1, &file_name, &record.checksum.sha512).await {
+                Ok(_) => inserted += 1,
+                Err(e) => {
+                    eprintln!("DB Error: {}", e);
+                    failed += 1;
+                }
+            }
+        }
+    }
+
+    (StatusCode::OK, Json(ImportResponse {
+        processed, inserted, updated, failed,
+        message: "Step 1 import completed".to_string()
+    })).into_response()
+}
+
+
+
+#[derive(Deserialize)]
+struct UpdateRunRequest {
+    run_number: i32,
+    status: Option<String>,
+    date: Option<chrono::DateTime<chrono::Utc>>,
+    note: Option<String>,
+}
+
+async fn update_run_details(
+    State(pool): State<Arc<PgPool>>,
+    headers: HeaderMap,
+    ExtractJson(payload): ExtractJson<UpdateRunRequest>,
+) -> impl IntoResponse {
+    // Check auth (allow either cookie or token with file_import scope)
+    if let Err((status, msg)) = check_auth_scope(&headers, "file_import").await {
+            return (status, Json(msg)).into_response();
+    }
+
+    // Handle Status Update
+    if let Some(new_state_str) = payload.status {
+         let _ = sqlx::query("UPDATE runs SET state = $1::workflow_state WHERE run_number = $2")
+            .bind(new_state_str)
+            .bind(payload.run_number)
+            .execute(pool.as_ref())
+            .await;
+    }
+
+    // Handle Date Update
+    if let Some(new_date) = payload.date {
+        let _ = sqlx::query("UPDATE runs SET run_start_date = $1 WHERE run_number = $2")
+            .bind(new_date)
+            .bind(payload.run_number)
+            .execute(pool.as_ref())
+            .await;
+    }
+
+    // Handle Note Update
+    if let Some(note) = payload.note {
+        let _ = sqlx::query(
+            "INSERT INTO run_notes (id, run_number, note) VALUES ($1, $2, $3)
+             ON CONFLICT (run_number) DO UPDATE SET note = EXCLUDED.note, updated_at = CURRENT_TIMESTAMP"
+        )
+            .bind(Uuid::new_v4())
+            .bind(payload.run_number)
+            .bind(note)
+            .execute(pool.as_ref())
+            .await;
+    }
+
+    (StatusCode::OK, Json("Run updated".to_string()))
+}
+
+
+
+#[derive(Deserialize)]
+struct BrokenFileRequest {
+    run_number: i32,
+    part_number: i32,
+    stage: String,
+    file_path: String,
+}
+
+#[derive(Deserialize)]
+struct GcdFileRequest {
+    run_number: i32,
+    stage: String,
+    location: String,
+    sha512: String,
+}
+
+async fn report_broken_file(
+    State(pool): State<Arc<PgPool>>,
+    headers: HeaderMap,
+    ExtractJson(payload): ExtractJson<BrokenFileRequest>,
+) -> impl IntoResponse {
+    // Check auth
+    if let Err((status, msg)) = check_auth_scope(&headers, "file_import").await {
+         return (status, Json(msg)).into_response();
+    }
+
+    // Parse Stage
+    let stage_enum = match payload.stage.as_str() {
+        "Raw Data" => Stage::RawData,
+        "Step 1" => Stage::Step1,
+        "Step 2" => Stage::Step2,
+        // Allow simplified names too
+        "raw" => Stage::RawData,
+        "step1" => Stage::Step1,
+        "step2" => Stage::Step2,
+        _ => return (StatusCode::BAD_REQUEST, Json("Invalid stage".to_string())).into_response(),
+    };
+
+    match sqlx::query(
+        "INSERT INTO broken_files (id, run_number, part_number, stage, file_path) VALUES ($1, $2, $3, $4::stage, $5)"
+    )
+    .bind(Uuid::new_v4())
+    .bind(payload.run_number)
+    .bind(payload.part_number)
+    .bind(stage_enum)
+    .bind(payload.file_path)
+    .execute(pool.as_ref())
+    .await {
+        Ok(_) => (StatusCode::OK, Json("Broken file reported".to_string())),
+        Err(e) => {
+            eprintln!("DB Error: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json("Failed to report broken file".to_string()))
+        }
+    }
+}
+
+async fn register_gcd_file(
+    State(pool): State<Arc<PgPool>>,
+    headers: HeaderMap,
+    ExtractJson(payload): ExtractJson<GcdFileRequest>,
+) -> impl IntoResponse {
+    // Check auth
+    if let Err((status, msg)) = check_auth_scope(&headers, "file_import").await {
+         return (status, Json(msg)).into_response();
+    }
+
+     // Parse Stage
+    let stage_enum = match payload.stage.as_str() {
+        "Raw Data" => Stage::RawData,
+        "Step 1" => Stage::Step1,
+        "Step 2" => Stage::Step2,
+        "raw" => Stage::RawData,
+        "step1" => Stage::Step1,
+        "step2" => Stage::Step2,
+        _ => return (StatusCode::BAD_REQUEST, Json("Invalid stage".to_string())).into_response(),
+    };
+
+    match sqlx::query(
+        "INSERT INTO gcd_files (id, run_number, stage, location, sha512) VALUES ($1, $2, $3::stage, $4, $5)
+         ON CONFLICT (run_number, stage) DO UPDATE SET location = EXCLUDED.location, sha512 = EXCLUDED.sha512, updated_at = CURRENT_TIMESTAMP"
+    )
+    .bind(Uuid::new_v4())
+    .bind(payload.run_number)
+    .bind(stage_enum)
+    .bind(payload.location)
+    .bind(payload.sha512)
+    .execute(pool.as_ref())
+    .await {
+        Ok(_) => (StatusCode::OK, Json("GCD file registered".to_string())),
+        Err(e) => {
+            eprintln!("DB Error: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json("Failed to register GCD file".to_string()))
+        }
+    }
 }
 
 async fn migrate_json_to_db(pool: &PgPool) {

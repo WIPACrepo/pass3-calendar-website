@@ -1,14 +1,15 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <meta charset='utf-8' />
     <title>Workflow Calendar</title>
     <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/index.global.min.js'></script>
-    
+
     <style>
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; 
-            padding: 20px; 
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            padding: 20px;
             background-color: #f4f6f8;
         }
 
@@ -19,6 +20,8 @@
             display: flex;
             justify-content: flex-end;
             align-items: center;
+            display: none;
+            /* Hidden entirely */
         }
 
         .login-btn {
@@ -30,30 +33,39 @@
             cursor: pointer;
             font-weight: bold;
         }
-        .login-btn:hover { background: #1a252f; }
-        
+
+        .login-btn:hover {
+            background: #1a252f;
+        }
+
         .logout-btn {
-            background: #dc3545; /* Red for logout */
+            background: #dc3545;
+            /* Red for logout */
             color: white;
             border: none;
             padding: 8px 16px;
             border-radius: 4px;
             cursor: pointer;
             font-weight: bold;
-            display: none; /* Hidden by default */
+            display: none;
+            /* Hidden by default */
         }
 
         /* --- CALENDAR CONTAINER --- */
         #calendar-container {
-            max-width: 1100px; 
-            margin: 0 auto; 
+            max-width: 1100px;
+            margin: 0 auto;
             background: white;
             padding: 25px;
             border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
         }
 
-        h1 { text-align: center; color: #2c3e50; margin-bottom: 25px; }
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 25px;
+        }
 
         /* --- LEGEND --- */
         .legend {
@@ -63,6 +75,7 @@
             background: #fff;
             border-bottom: 1px solid #eee;
         }
+
         .legend-item {
             display: inline-block;
             margin: 0 15px;
@@ -70,6 +83,7 @@
             color: #555;
             vertical-align: middle;
         }
+
         .dot {
             height: 12px;
             width: 12px;
@@ -80,45 +94,65 @@
         }
 
         /* --- FORCE BLACK TEXT ON EVENTS --- */
-        .fc-event, .fc-event-main, .fc-event-title, .fc-event-time {
+        .fc-event,
+        .fc-event-main,
+        .fc-event-title,
+        .fc-event-time {
             color: #000000 !important;
             font-weight: 700 !important;
         }
 
         /* --- MODAL (POPUP) --- */
         .modal {
-            display: none; 
-            position: fixed; 
-            z-index: 1000; 
-            left: 0; top: 0;
-            width: 100%; height: 100%; 
-            background-color: rgba(0,0,0,0.5);
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
             backdrop-filter: blur(2px);
         }
 
         .modal-content {
             background-color: #fff;
-            margin: 10vh auto; 
+            margin: 10vh auto;
             padding: 30px;
             border: 1px solid #888;
             width: 90%;
             max-width: 500px;
             border-radius: 12px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
             position: relative;
         }
 
         .close {
             position: absolute;
-            right: 20px; top: 15px;
-            font-size: 28px; font-weight: bold; color: #aaa;
+            right: 20px;
+            top: 15px;
+            font-size: 28px;
+            font-weight: bold;
+            color: #aaa;
             cursor: pointer;
         }
-        .close:hover { color: #000; }
-        
-        #modalTitle { margin-top: 0; color: #333; }
-        .modal-label { font-weight: bold; color: #666; display: inline-block; width: 80px; }
-        
+
+        .close:hover {
+            color: #000;
+        }
+
+        #modalTitle {
+            margin-top: 0;
+            color: #333;
+        }
+
+        .modal-label {
+            font-weight: bold;
+            color: #666;
+            display: inline-block;
+            width: 80px;
+        }
+
         .status-badge {
             padding: 4px 12px;
             border-radius: 20px;
@@ -129,10 +163,21 @@
         }
 
         .btn {
-            display: block; width: 100%; text-align: center; margin-top: 25px; padding: 12px 0;
-            background-color: #007bff; color: white; text-decoration: none; border-radius: 6px; font-weight: bold;
+            display: block;
+            width: 100%;
+            text-align: center;
+            margin-top: 25px;
+            padding: 12px 0;
+            background-color: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: bold;
         }
-        .btn:hover { background-color: #0056b3; }
+
+        .btn:hover {
+            background-color: #0056b3;
+        }
 
         /* --- PROGRESS BAR --- */
         .progress-section {
@@ -142,12 +187,14 @@
             border-radius: 8px;
             border-left: 4px solid #2c3e50;
         }
+
         .progress-label {
             font-weight: bold;
             color: #2c3e50;
             margin-bottom: 8px;
             font-size: 0.95em;
         }
+
         .progress-bar-container {
             background: #e9ecef;
             border-radius: 8px;
@@ -156,6 +203,7 @@
             border: 1px solid #dee2e6;
             position: relative;
         }
+
         .progress-bar-fill {
             background: linear-gradient(90deg, #28a745, #20c997);
             height: 100%;
@@ -179,9 +227,11 @@
             border-left: 4px solid #007bff;
             display: none;
         }
+
         .bulk-update-section.visible {
             display: block;
         }
+
         .date-range-inputs {
             display: flex;
             gap: 10px;
@@ -189,16 +239,19 @@
             flex-wrap: wrap;
             margin-bottom: 15px;
         }
+
         .date-range-inputs label {
             font-weight: bold;
             color: #2c3e50;
         }
+
         .date-range-inputs input {
             padding: 8px;
             border: 1px solid #ccc;
             border-radius: 4px;
             font-size: 0.95em;
         }
+
         .bulk-btn {
             padding: 8px 16px;
             background: #007bff;
@@ -208,9 +261,11 @@
             cursor: pointer;
             font-weight: bold;
         }
+
         .bulk-btn:hover {
             background: #0056b3;
         }
+
         .bulk-btn:disabled {
             background: #ccc;
             cursor: not-allowed;
@@ -218,320 +273,315 @@
     </style>
 
     <script>
-      document.addEventListener('DOMContentLoaded', function() {
-        var calendarEl = document.getElementById('calendar');
+        document.addEventListener('DOMContentLoaded', function () {
+            var calendarEl = document.getElementById('calendar');
 
-        // --- AUTH LOGIC ---
-        // Simple check: see if cookie contains our flag
-        function isLoggedIn() {
-            return document.cookie.includes("session=admin_authorized");
-        }
-
-        function updateAuthUI() {
-            if(isLoggedIn()) {
-                document.getElementById('btnLogin').style.display = 'none';
-                document.getElementById('btnLogout').style.display = 'block';
-                document.getElementById('loginStatusText').innerText = "Logged in as Admin";
-                document.getElementById('bulkUpdateSection').classList.add('visible');
-            } else {
-                document.getElementById('btnLogin').style.display = 'block';
-                document.getElementById('btnLogout').style.display = 'none';
-                document.getElementById('loginStatusText').innerText = "";
-                document.getElementById('bulkUpdateSection').classList.remove('visible');
+            // --- AUTH LOGIC ---
+            // Simple check: see if cookie contains our flag
+            function isLoggedIn() {
+                return document.cookie.includes("session=admin_authorized");
             }
-        }
 
-        // --- CALENDAR CONFIG ---
-        const workflowSteps = {
-            'Not Yet Started': 0,
-            'Transfer from Tape': 15, 'Process Step 1': 30, 'Finish Step 1': 45,
-            'Transfer WIPAC': 60, 'Process Step 2': 75, 'Finish Step 2': 90, 'Complete': 100
-        };
-
-        const colors = {
-            progress: '#fd7e14', empty: '#e9ecef', complete: '#28a745', error: '#dc3545', text: '#000000'
-        };
-
-        function getStyleForStatus(status) {
-            const safeStatus = (status || "").toLowerCase();
-            if (safeStatus.includes('error')) return { background: colors.error, border: 'none' };
-            if (safeStatus === 'complete') return { background: colors.complete, border: 'none' };
-
-            const percent = workflowSteps[status] || 0;
-            const gradient = `linear-gradient(to right, ${colors.progress} ${percent}%, ${colors.empty} ${percent}%)`;
-            return { background: gradient, border: '1px solid #999' };
-        }
-
-        function calculateOverallProgress(events) {
-            if (events.length === 0) return 0;
-            
-            const totalProgress = events.reduce((sum, event) => {
-                const percent = workflowSteps[event.status] || 0;
-                return sum + percent;
-            }, 0);
-            
-            return Math.round(totalProgress / events.length);
-        }
-
-        function updateProgressBar(events) {
-            const overallProgress = calculateOverallProgress(events);
-            const progressFill = document.getElementById('progressBarFill');
-            progressFill.style.width = overallProgress + '%';
-            progressFill.innerText = overallProgress + '%';
-        }
-
-        function filterEventsByDateRange(events, startDate, endDate) {
-            const start = new Date(startDate);
-            const end = new Date(endDate);
-            end.setHours(23, 59, 59, 999); // Include entire end day
-            
-            return events.filter(event => {
-                const eventDate = new Date(event.date);
-                return eventDate >= start && eventDate <= end;
-            });
-        }
-
-        function openBulkUpdateModal(events) {
-            const modal = document.getElementById('bulkUpdateModal');
-            const eventsList = document.getElementById('bulkEventsList');
-            const statusSelect = document.getElementById('bulkStatusSelect');
-            
-            // Display events
-            eventsList.innerHTML = events.length === 0 
-                ? '<p style="color: #999; text-align: center;">No events found in this date range</p>'
-                : events.map(e => `<div style="padding: 8px; border-bottom: 1px solid #eee;"><strong>${e.title}</strong> (${new Date(e.date).toLocaleDateString()}) - Status: ${e.status}</div>`).join('');
-            
-            // Populate status dropdown
-            statusSelect.innerHTML = '';
-            const allOptions = Object.keys(workflowSteps).concat(['Step 1 Error', 'Step 2 Error']);
-            allOptions.forEach(opt => {
-                const option = document.createElement('option');
-                option.value = opt;
-                option.text = opt;
-                statusSelect.appendChild(option);
-            });
-            
-            document.getElementById('bulkModalTitle').innerText = `Found ${events.length} event(s)`;
-            modal.style.display = 'block';
-            
-            // Store events for apply operation
-            modal.dataset.events = JSON.stringify(events);
-        }
-
-        var calendar = new FullCalendar.Calendar(calendarEl, {
-          initialView: 'dayGridMonth',
-          height: 'auto',
-          headerToolbar: {
-            left: 'prev,next today', center: 'title', right: 'dayGridMonth,listMonth' 
-          },
-          events: {
-            url: '/api/events',
-            success: function(events) {
-              updateProgressBar(events);
-              return events;
+            function updateAuthUI() {
+                if (isLoggedIn()) {
+                    document.getElementById('btnLogin').style.display = 'none';
+                    document.getElementById('btnLogout').style.display = 'block';
+                    document.getElementById('loginStatusText').innerText = "Logged in as Admin";
+                    document.getElementById('bulkUpdateSection').classList.add('visible');
+                } else {
+                    document.getElementById('btnLogin').style.display = 'block';
+                    document.getElementById('btnLogout').style.display = 'none';
+                    document.getElementById('loginStatusText').innerText = "";
+                    document.getElementById('bulkUpdateSection').classList.remove('visible');
+                }
             }
-          }, 
 
-          eventDidMount: function(info) {
-            const status = info.event.extendedProps.status;
-            const style = getStyleForStatus(status);
-            info.el.style.background = style.background;
-            info.el.style.border = style.border;
-            info.el.title = `${status}`;
-          },
+            // --- CALENDAR CONFIG ---
+            const workflowSteps = {
+                'Not Yet Started': 0,
+                'Transfer from Tape': 15, 'Process Step 1': 30, 'Finish Step 1': 45,
+                'Transfer WIPAC': 60, 'Process Step 2': 75, 'Finish Step 2': 90, 'Complete': 100
+            };
 
-          // --- MODAL LOGIC ---
-          eventClick: function(info) {
-            info.jsEvent.preventDefault();
-            const props = info.event.extendedProps;
-            
-            document.getElementById('modalTitle').innerText = info.event.title;
-            document.getElementById('modalDate').innerText = info.event.start.toLocaleDateString();
-            document.getElementById('modalDesc').innerText = props.description || "";
-            document.getElementById('modalLink').href = props.url || "#";
+            const colors = {
+                progress: '#fd7e14', empty: '#e9ecef', complete: '#28a745', error: '#dc3545', text: '#000000'
+            };
 
-            // Status Badge
-            const badge = document.getElementById('modalStatus');
-            badge.innerText = props.status;
-            if(props.status.toLowerCase().includes('error')) badge.style.backgroundColor = colors.error;
-            else if(props.status === 'Complete') badge.style.backgroundColor = colors.complete;
-            else badge.style.backgroundColor = colors.progress;
+            function getStyleForStatus(status, rawMax, step1Max) {
+                const safeStatus = (status || "").toLowerCase();
+                if (safeStatus.includes('error')) return { background: colors.error, border: 'none' };
+                if (safeStatus === 'complete') return { background: colors.complete, border: 'none' };
 
-            // --- PERMISSION CHECK ---
-            const editSection = document.getElementById('editSection');
-            if (isLoggedIn()) {
-                editSection.style.display = 'block';
-                
-                // Populate Dropdown
-                const select = document.getElementById('statusSelect');
-                select.innerHTML = ''; 
+                // Dynamic progress based on file counts
+                if (rawMax && rawMax > 0) {
+                    const ratio = (step1Max || 0) / rawMax;
+                    const filePercent = Math.min(Math.round(ratio * 100), 100);
+                    // If file progress exists, it overrides status-based progress (unless complete/error)
+                    const gradient = `linear-gradient(to right, ${colors.progress} ${filePercent}%, ${colors.empty} ${filePercent}%)`;
+                    return { background: gradient, border: '1px solid #999' };
+                }
+
+                const percent = workflowSteps[status] || 0;
+                const gradient = `linear-gradient(to right, ${colors.progress} ${percent}%, ${colors.empty} ${percent}%)`;
+                return { background: gradient, border: '1px solid #999' };
+            }
+
+            function calculateOverallProgress(events) {
+                if (events.length === 0) return 0;
+
+                const totalProgress = events.reduce((sum, event) => {
+                    const percent = workflowSteps[event.status] || 0;
+                    return sum + percent;
+                }, 0);
+
+                return Math.round(totalProgress / events.length);
+            }
+
+            function updateProgressBar(events) {
+                const overallProgress = calculateOverallProgress(events);
+                const progressFill = document.getElementById('progressBarFill');
+                progressFill.style.width = overallProgress + '%';
+                progressFill.innerText = overallProgress + '%';
+            }
+
+            function filterEventsByDateRange(events, startDate, endDate) {
+                const start = new Date(startDate);
+                const end = new Date(endDate);
+                end.setHours(23, 59, 59, 999); // Include entire end day
+
+                return events.filter(event => {
+                    const eventDate = new Date(event.date);
+                    return eventDate >= start && eventDate <= end;
+                });
+            }
+
+            function openBulkUpdateModal(events) {
+                const modal = document.getElementById('bulkUpdateModal');
+                const eventsList = document.getElementById('bulkEventsList');
+                const statusSelect = document.getElementById('bulkStatusSelect');
+
+                // Display events
+                eventsList.innerHTML = events.length === 0
+                    ? '<p style="color: #999; text-align: center;">No events found in this date range</p>'
+                    : events.map(e => `<div style="padding: 8px; border-bottom: 1px solid #eee;"><strong>${e.title}</strong> (${new Date(e.date).toLocaleDateString()}) - Status: ${e.status}</div>`).join('');
+
+                // Populate status dropdown
+                statusSelect.innerHTML = '';
                 const allOptions = Object.keys(workflowSteps).concat(['Step 1 Error', 'Step 2 Error']);
-                
                 allOptions.forEach(opt => {
                     const option = document.createElement('option');
                     option.value = opt;
                     option.text = opt;
-                    if (opt === props.status) option.selected = true;
-                    select.appendChild(option);
+                    statusSelect.appendChild(option);
                 });
 
-                // Handle Save
-                const saveBtn = document.getElementById('saveBtn');
-                const msg = document.getElementById('saveMsg');
-                msg.style.display = 'none'; 
-                
-                // Clean clone to remove old listeners
-                const newBtn = saveBtn.cloneNode(true);
-                saveBtn.parentNode.replaceChild(newBtn, saveBtn);
+                document.getElementById('bulkModalTitle').innerText = `Found ${events.length} event(s)`;
+                modal.style.display = 'block';
 
-                newBtn.onclick = function() {
-                    const newStatus = select.value;
-                    fetch('/api/events', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ title: info.event.title, new_status: newStatus })
-                    }).then(res => {
-                        if (res.status === 401) {
-                            alert("Session expired. Please log in.");
-                        } else {
-                            msg.style.display = 'inline';
-                            info.event.setExtendedProp('status', newStatus);
-                            badge.innerText = newStatus;
-                            // Update badge color
-                            if(newStatus.toLowerCase().includes('error')) badge.style.backgroundColor = colors.error;
-                            else if(newStatus === 'Complete') badge.style.backgroundColor = colors.complete;
-                            else badge.style.backgroundColor = colors.progress;
-                            calendar.render();
-                            
-                            // Refresh progress bar
-                            fetch('/api/events').then(r => r.json()).then(events => {
-                                updateProgressBar(events);
-                            });
+                // Store events for apply operation
+                modal.dataset.events = JSON.stringify(events);
+            }
+
+            var calendar = new FullCalendar.Calendar(calendarEl, {
+                initialView: 'dayGridMonth',
+                height: 'auto',
+                headerToolbar: {
+                    left: 'prev,next today', center: 'title', right: 'dayGridMonth,listMonth'
+                },
+                events: {
+                    url: '/api/events',
+                    success: function (events) {
+                        updateProgressBar(events);
+                        return events;
+                    }
+                },
+
+                eventDidMount: function (info) {
+                    const status = info.event.extendedProps.status;
+                    const props = info.event.extendedProps;
+                    const rawMax = props.raw_max_part || 0;
+                    const step1Max = props.step1_max_part || 0;
+
+                    const style = getStyleForStatus(status, rawMax, step1Max);
+                    info.el.style.background = style.background;
+                    info.el.style.border = style.border;
+                    info.el.title = `${status}`;
+
+                    // Check for max part discrepancy (variables declared above)
+                    if (rawMax !== step1Max) {
+                        const titleEl = info.el.querySelector('.fc-event-title');
+                        if (titleEl) {
+                            titleEl.innerHTML += ' <span style="color:red; font-size:1.1em;">⚠</span>';
                         }
-                    });
-                };
-            } else {
-                // Not Logged In -> Hide Edit controls
-                editSection.style.display = 'none';
-            }
+                    }
+                },
 
-            document.getElementById('eventModal').style.display = "block";
-          }
-        });
+                // --- MODAL LOGIC ---
+                eventClick: function (info) {
+                    info.jsEvent.preventDefault();
+                    const props = info.event.extendedProps;
 
-        calendar.render();
-        updateAuthUI(); // Check login on load
+                    document.getElementById('modalTitle').innerText = info.event.title;
+                    document.getElementById('modalDate').innerText = info.event.start.toLocaleDateString();
+                    document.getElementById('modalDesc').innerText = props.description || "";
+                    document.getElementById('modalLink').href = props.url || "#";
 
-        // --- GLOBAL INTERACTIONS ---
-        
-        // 1. Open Login Modal
-        document.getElementById('btnLogin').onclick = function() {
-            document.getElementById('loginModal').style.display = 'block';
-        };
+                    // Show Max Part info
+                    const rawMax = props.raw_max_part || 0;
+                    const step1Max = props.step1_max_part || 0;
+                    const partInfoEl = document.getElementById('modalPartInfo');
 
-        // 2. Perform Login
-        document.getElementById('doLoginBtn').onclick = function() {
-            const pass = document.getElementById('passwordInput').value;
-            fetch('/api/login', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ password: pass })
-            }).then(async res => {
-                const text = await res.json();
-                if(text === "Login Successful") {
-                    document.getElementById('loginModal').style.display = 'none';
-                    updateAuthUI();
-                    alert("Logged in! You can now edit events.");
-                } else {
-                    alert("Incorrect Password");
+                    if (rawMax !== step1Max) {
+                        let msg = `<span style="color:red; font-weight:bold;">⚠ Discrepancy:</span> Raw Max Part: ${rawMax}, Step 1 Max Part: ${step1Max}`;
+
+                        // Show missing parts if available
+                        const missing = props.missing_step1_parts;
+                        if (missing && missing.length > 0) {
+                            msg += `<br><br><strong>Missing Step 1 Parts:</strong><br>${missing.join(', ')}`;
+                        }
+
+                        partInfoEl.innerHTML = msg;
+                        partInfoEl.style.display = 'block';
+                    } else {
+                        partInfoEl.innerHTML = `Max Part: ${rawMax}`;
+                        partInfoEl.style.display = 'block';
+                    }
+
+                    // Status Badge
+                    const badge = document.getElementById('modalStatus');
+                    badge.innerText = props.status;
+                    if (props.status.toLowerCase().includes('error')) badge.style.backgroundColor = colors.error;
+                    else if (props.status === 'Complete') badge.style.backgroundColor = colors.complete;
+                    else badge.style.backgroundColor = colors.progress;
+
+                    // Show Note
+                    const note = props.note;
+                    const noteEl = document.getElementById('modalNote');
+                    if (note && note.trim() !== "") {
+                        document.getElementById('modalNoteText').innerText = note;
+                        noteEl.style.display = 'block';
+                    } else {
+                        noteEl.style.display = 'none';
+                    }
+
+                    document.getElementById('eventModal').style.display = "block";
                 }
             });
-        };
 
-        // 3. Perform Logout (Clear cookie)
-        document.getElementById('btnLogout').onclick = function() {
-            document.cookie = "session=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
-            updateAuthUI();
-            alert("Logged out.");
-        };
+            calendar.render();
+            updateAuthUI(); // Check login on load
 
-        // 4. Bulk Update by Date Range
-        document.getElementById('bulkSearchBtn').onclick = function() {
-            const startDate = document.getElementById('bulkStartDate').value;
-            const endDate = document.getElementById('bulkEndDate').value;
-            
-            if (!startDate || !endDate) {
-                alert("Please select both start and end dates");
-                return;
-            }
-            
-            fetch('/api/events').then(r => r.json()).then(events => {
-                const filtered = filterEventsByDateRange(events, startDate, endDate);
-                if (filtered.length === 0) {
-                    alert("No events found in this date range");
-                } else {
-                    openBulkUpdateModal(filtered);
-                }
-            });
-        };
+            // --- GLOBAL INTERACTIONS ---
 
-        // 5. Apply Bulk Update
-        document.getElementById('bulkApplyBtn').onclick = function() {
-            const modal = document.getElementById('bulkUpdateModal');
-            const events = JSON.parse(modal.dataset.events || '[]');
-            const newStatus = document.getElementById('bulkStatusSelect').value;
-            
-            if (events.length === 0) {
-                alert("No events selected");
-                return;
-            }
-            
-            const bulkApplyBtn = document.getElementById('bulkApplyBtn');
-            bulkApplyBtn.disabled = true;
-            bulkApplyBtn.innerText = 'Updating...';
-            
-            // Use bulk endpoint for efficiency - single GitHub push for all updates
-            fetch('/api/events/bulk', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    titles: events.map(e => e.title),
-                    new_status: newStatus 
-                })
-            }).then(res => res.json()).then(response => {
-                modal.style.display = 'none';
-                bulkApplyBtn.disabled = false;
-                bulkApplyBtn.innerText = 'Apply to All';
-                
-                alert(`Updated ${events.length} event(s) to "${newStatus}"`);
-                
-                calendar.refetchEvents();
-                fetch('/api/events').then(r => r.json()).then(events => {
-                    updateProgressBar(events);
+            // 1. Open Login Modal
+            document.getElementById('btnLogin').onclick = function () {
+                document.getElementById('loginModal').style.display = 'block';
+            };
+
+            // 2. Perform Login
+            document.getElementById('doLoginBtn').onclick = function () {
+                const pass = document.getElementById('passwordInput').value;
+                fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: pass })
+                }).then(async res => {
+                    const text = await res.json();
+                    if (text === "Login Successful") {
+                        document.getElementById('loginModal').style.display = 'none';
+                        updateAuthUI();
+                        alert("Logged in! You can now edit events.");
+                    } else {
+                        alert("Incorrect Password");
+                    }
                 });
-            }).catch(() => {
-                bulkApplyBtn.disabled = false;
-                bulkApplyBtn.innerText = 'Apply to All';
-                alert("Error updating events. Please try again.");
-            });
-        };
+            };
 
-        // Close Buttons for Modals
-        document.querySelectorAll('.close').forEach(el => {
-            el.onclick = function() {
-                el.closest('.modal').style.display = "none";
+            // 3. Perform Logout (Clear cookie)
+            document.getElementById('btnLogout').onclick = function () {
+                document.cookie = "session=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+                updateAuthUI();
+                alert("Logged out.");
+            };
+
+            // 4. Bulk Update by Date Range
+            document.getElementById('bulkSearchBtn').onclick = function () {
+                const startDate = document.getElementById('bulkStartDate').value;
+                const endDate = document.getElementById('bulkEndDate').value;
+
+                if (!startDate || !endDate) {
+                    alert("Please select both start and end dates");
+                    return;
+                }
+
+                fetch('/api/events').then(r => r.json()).then(events => {
+                    const filtered = filterEventsByDateRange(events, startDate, endDate);
+                    if (filtered.length === 0) {
+                        alert("No events found in this date range");
+                    } else {
+                        openBulkUpdateModal(filtered);
+                    }
+                });
+            };
+
+            // 5. Apply Bulk Update
+            document.getElementById('bulkApplyBtn').onclick = function () {
+                const modal = document.getElementById('bulkUpdateModal');
+                const events = JSON.parse(modal.dataset.events || '[]');
+                const newStatus = document.getElementById('bulkStatusSelect').value;
+
+                if (events.length === 0) {
+                    alert("No events selected");
+                    return;
+                }
+
+                const bulkApplyBtn = document.getElementById('bulkApplyBtn');
+                bulkApplyBtn.disabled = true;
+                bulkApplyBtn.innerText = 'Updating...';
+
+                // Use bulk endpoint for efficiency - single GitHub push for all updates
+                fetch('/api/events/bulk', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        titles: events.map(e => e.title),
+                        new_status: newStatus
+                    })
+                }).then(res => res.json()).then(response => {
+                    modal.style.display = 'none';
+                    bulkApplyBtn.disabled = false;
+                    bulkApplyBtn.innerText = 'Apply to All';
+
+                    alert(`Updated ${events.length} event(s) to "${newStatus}"`);
+
+                    calendar.refetchEvents();
+                    fetch('/api/events').then(r => r.json()).then(events => {
+                        updateProgressBar(events);
+                    });
+                }).catch(() => {
+                    bulkApplyBtn.disabled = false;
+                    bulkApplyBtn.innerText = 'Apply to All';
+                    alert("Error updating events. Please try again.");
+                });
+            };
+
+            // Close Buttons for Modals
+            document.querySelectorAll('.close').forEach(el => {
+                el.onclick = function () {
+                    el.closest('.modal').style.display = "none";
+                }
+            });
+
+            // Close on outside click
+            window.onclick = function (event) {
+                if (event.target.classList.contains('modal')) {
+                    event.target.style.display = "none";
+                }
             }
         });
-        
-        // Close on outside click
-        window.onclick = function(event) {
-            if (event.target.classList.contains('modal')) {
-                event.target.style.display = "none";
-            }
-        }
-      });
     </script>
 </head>
+
 <body>
 
     <div id="top-bar">
@@ -550,19 +600,11 @@
             </div>
         </div>
 
-        <div class="bulk-update-section" id="bulkUpdateSection">
-            <div style="margin-bottom: 15px; font-weight: bold; color: #2c3e50;">Bulk Update Events by Date Range</div>
-            <div class="date-range-inputs">
-                <label>From:</label>
-                <input type="date" id="bulkStartDate">
-                <label>To:</label>
-                <input type="date" id="bulkEndDate">
-                <button class="bulk-btn" id="bulkSearchBtn">Find Events</button>
-            </div>
-        </div>
+
 
         <div class="legend">
-            <div class="legend-item"><span class="dot" style="background-color: #e9ecef; border: 1px solid #ccc;"></span>Pending</div>
+            <div class="legend-item"><span class="dot"
+                    style="background-color: #e9ecef; border: 1px solid #ccc;"></span>Pending</div>
             <div class="legend-item"><span class="dot" style="background-color: #fd7e14;"></span>In Progress</div>
             <div class="legend-item"><span class="dot" style="background-color: #28a745;"></span>Complete</div>
             <div class="legend-item"><span class="dot" style="background-color: #dc3545;"></span>Error</div>
@@ -576,14 +618,15 @@
             <span class="close">&times;</span>
             <h2 id="modalTitle">Event Title</h2>
             <p><span class="modal-label">Date:</span> <span id="modalDate"></span></p>
-
-            <div id="editSection" style="margin: 15px 0; padding: 15px; background: #f9f9f9; border-radius: 8px; display: none;">
-                <label class="modal-label">Update:</label>
-                <select id="statusSelect" style="padding: 5px; font-size: 1em; border-radius: 4px; width: 180px;"></select>
-                <button id="saveBtn" style="margin-left: 10px; padding: 6px 12px; background: #2c3e50; color: white; border: none; border-radius: 4px; cursor: pointer;">Save</button>
-                <span id="saveMsg" style="color: #28a745; margin-left:10px; font-weight:bold; display: none;">Saved!</span>
+            <div id="modalPartInfo"
+                style="margin: 10px 0; padding: 10px; background: #fff3cd; border: 1px solid #ffeeba; border-radius: 4px; display: none;">
             </div>
-            
+
+            <div id="modalNote"
+                style="margin: 15px 0; padding: 15px; background: #e9ecef; border-radius: 8px; font-style: italic; display: none;">
+                <strong>Note:</strong> <span id="modalNoteText"></span>
+            </div>
+
             <p><span class="modal-label">Current:</span> <span id="modalStatus" class="status-badge"></span></p>
             <hr style="border: 0; border-top: 1px solid #eee; margin: 15px 0;">
             <p style="color: #666; line-height: 1.5;" id="modalDesc"></p>
@@ -596,9 +639,11 @@
             <span class="close">&times;</span>
             <h2>Login</h2>
             <p>Enter Administrator Password:</p>
-            <input type="password" id="passwordInput" placeholder="Password" style="padding: 10px; width: 80%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px;">
+            <input type="password" id="passwordInput" placeholder="Password"
+                style="padding: 10px; width: 80%; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px;">
             <br>
-            <button id="doLoginBtn" style="padding: 10px 20px; background: #2c3e50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Submit</button>
+            <button id="doLoginBtn"
+                style="padding: 10px 20px; background: #2c3e50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Submit</button>
         </div>
     </div>
 
@@ -606,14 +651,18 @@
         <div class="modal-content">
             <span class="close">&times;</span>
             <h2 id="bulkModalTitle">Events Found</h2>
-            <div id="bulkEventsList" style="max-height: 300px; overflow-y: auto; margin: 15px 0; padding: 10px; background: #f9f9f9; border-radius: 4px; border: 1px solid #ddd;"></div>
+            <div id="bulkEventsList"
+                style="max-height: 300px; overflow-y: auto; margin: 15px 0; padding: 10px; background: #f9f9f9; border-radius: 4px; border: 1px solid #ddd;">
+            </div>
             <div style="margin: 15px 0; padding: 15px; background: #f9f9f9; border-radius: 8px;">
                 <label style="font-weight: bold; display: block; margin-bottom: 8px;">Update all to:</label>
-                <select id="bulkStatusSelect" style="padding: 8px; width: 100%; border: 1px solid #ccc; border-radius: 4px; font-size: 0.95em;"></select>
+                <select id="bulkStatusSelect"
+                    style="padding: 8px; width: 100%; border: 1px solid #ccc; border-radius: 4px; font-size: 0.95em;"></select>
             </div>
             <button id="bulkApplyBtn" class="btn" style="margin-top: 15px;">Apply to All</button>
         </div>
     </div>
 
 </body>
+
 </html>
