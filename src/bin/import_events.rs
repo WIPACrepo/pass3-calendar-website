@@ -165,53 +165,67 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         // Regex to extract run number from GCD filename
-        // Pattern: OnlinePass3_IC86.2019_data_Run00133574_78_503_GCD.i3.zst
         let re = Regex::new(r"Run(\d+)_").unwrap();
 
+        // Collect all GCD file paths first
         let dir = std::fs::read_dir(&gcd_dir_path)?;
-        
-        for entry in dir {
-            let entry = entry?;
-            let path = entry.path();
-            
-            // Skip if not a file or doesn't have GCD in name
-            if !path.is_file() {
-                continue;
-            }
-            
-            let filename = path.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
-            
-            if !filename.contains("GCD") || !filename.ends_with(".i3.zst") {
-                continue;
-            }
-
-            // Extract run number
-            let run_number = if let Some(caps) = re.captures(filename) {
-                caps[1].parse::<i32>().unwrap_or(0)
-            } else {
-                println!("Skipping file '{}': Could not parse run number", filename);
-                skipped += 1;
-                continue;
-            };
-
-            // Get absolute path
-            let absolute_path = path.canonicalize()
-                .unwrap_or(path.clone())
-                .to_string_lossy()
-                .to_string();
-
-            // Compute SHA512
-            let sha512 = match compute_sha512(&path) {
-                Ok(hash) => hash,
-                Err(e) => {
-                    println!("Error computing SHA512 for '{}': {}", filename, e);
-                    skipped += 1;
-                    continue;
+        let file_paths: Vec<_> = dir
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| {
+                if !path.is_file() {
+                    return false;
                 }
-            };
+                let filename = path.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                filename.contains("GCD") && filename.ends_with(".i3.zst")
+            })
+            .collect();
 
+        println!("Found {} GCD files to process", file_paths.len());
+
+        // Use rayon to compute hashes in parallel
+        use rayon::prelude::*;
+        
+        let results: Vec<_> = file_paths
+            .par_iter()
+            .filter_map(|path| {
+                let filename = path.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+
+                // Extract run number
+                let run_number = if let Some(caps) = re.captures(filename) {
+                    caps[1].parse::<i32>().unwrap_or(0)
+                } else {
+                    println!("Skipping file '{}': Could not parse run number", filename);
+                    return None;
+                };
+
+                // Get absolute path
+                let absolute_path = path.canonicalize()
+                    .unwrap_or(path.clone())
+                    .to_string_lossy()
+                    .to_string();
+
+                // Compute SHA512
+                let sha512 = match compute_sha512(path) {
+                    Ok(hash) => hash,
+                    Err(e) => {
+                        println!("Error computing SHA512 for '{}': {}", filename, e);
+                        return None;
+                    }
+                };
+
+                Some((run_number, absolute_path, sha512, filename.to_string()))
+            })
+            .collect();
+
+        println!("Successfully hashed {} files, now inserting into database...", results.len());
+
+        // Insert results sequentially into database
+        for (run_number, absolute_path, sha512, filename) in results {
             // Check if this GCD file already exists (by SHA512)
             let exists: bool = sqlx::query_scalar(
                 "SELECT EXISTS(SELECT 1 FROM gcd_files WHERE sha512 = $1)"
