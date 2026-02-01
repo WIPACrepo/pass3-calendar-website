@@ -94,6 +94,18 @@ CREATE TABLE IF NOT EXISTS run_notes (
     UNIQUE(run_number)
 );
 
+-- Create filter_rates table for storing filter rates per run
+CREATE TABLE IF NOT EXISTS filter_rates (
+    id UUID PRIMARY KEY,
+    run_number INT NOT NULL,
+    stage stage NOT NULL,
+    filter_rates JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (run_number) REFERENCES runs(run_number) ON DELETE CASCADE,
+    UNIQUE(run_number, stage)
+);
+
 -- Create indexes for faster queries
 CREATE INDEX IF NOT EXISTS idx_runs_state ON runs(state);
 CREATE INDEX IF NOT EXISTS idx_runs_start_date ON runs(run_start_date);
