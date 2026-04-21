@@ -8,7 +8,6 @@ axum = "0.6"
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-csv = "1.3"
 clap = { version = "4.0", features = ["derive"] }
 tower-http = { version = "0.4", features = ["fs"] }
 reqwest = { version = "0.11", features = ["json"] }
@@ -16,7 +15,7 @@ base64 = "0.21"
 axum-extra = { version = "0.7", features = ["cookie"] }
 regex = "1.10"
 # Database
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json"] }
 uuid = { version = "1.0", features = ["v4", "v5", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 # OIDC/JWT
