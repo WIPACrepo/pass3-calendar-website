@@ -1,5 +1,8 @@
 use clap::Parser;
-use pass3_calendar_website::importers::{import_grl_file, validate_grl_json_file};
+use pass3_calendar_website::{
+    importers::{import_grl_file, validate_grl_json_file},
+    run_app_migrations,
+};
 use sqlx::postgres::PgPoolOptions;
 use std::path::Path;
 
@@ -82,9 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("Skipping migrations (--skip-migrations flag set)...");
     } else {
         println!("Running migrations to create schema...");
-        sqlx::migrate!("./migrations")
-            .run(&pool)
-            .await?;
+        run_app_migrations(&pool).await?;
     }
 
     // Import GRL JSON if provided as argument

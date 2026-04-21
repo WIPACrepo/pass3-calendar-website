@@ -3,7 +3,7 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use ndarray::{ArrayD, IxDyn, OwnedRepr};
 use ndarray_npy::NpzReader;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Map, Value};
 use sqlx::postgres::PgPool;
 use std::collections::HashMap;
@@ -46,8 +46,10 @@ struct GrlFile {
 #[derive(Debug, Deserialize)]
 struct GrlRunRecord {
     good_i3: bool,
-    good_tstart: String,
-    good_tstop: String,
+    #[serde(deserialize_with = "deserialize_grl_timestamp_field")]
+    good_tstart: Option<String>,
+    #[serde(deserialize_with = "deserialize_grl_timestamp_field")]
+    good_tstop: Option<String>,
     run: i32,
 }
 
@@ -283,8 +285,8 @@ pub async fn import_grl_file(pool: &PgPool, grl_path: &Path) -> Result<ImportRep
             continue;
         }
 
-        let run_start_date = parse_grl_timestamp(&record.good_tstart)?;
-        let run_end_date = parse_grl_timestamp(&record.good_tstop)?;
+        let run_start_date = parse_grl_timestamp(record.good_tstart.as_deref())?;
+        let run_end_date = parse_grl_timestamp(record.good_tstop.as_deref())?;
 
         match sqlx::query(
             "INSERT INTO runs (run_number, run_start_date, run_end_date, state, url)
@@ -687,16 +689,70 @@ fn summarize_json_shape(value: &Value) -> Value {
     value.clone()
 }
 
-fn parse_grl_timestamp(value: &str) -> Result<DateTime<Utc>, DynError> {
-    if let Ok(parsed) = DateTime::parse_from_rfc3339(value) {
+fn deserialize_grl_timestamp_field<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<String>::deserialize(deserializer)?;
+
+    Ok(value.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("null") {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }))
+}
+
+fn parse_grl_timestamp(value: Option<&str>) -> Result<DateTime<Utc>, DynError> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(unix_epoch());
+    };
+
+    if value.eq_ignore_ascii_case("null") {
+        return Ok(unix_epoch());
+    }
+
+    let normalized = normalize_grl_timestamp(value, 6);
+
+    if let Ok(parsed) = DateTime::parse_from_rfc3339(&normalized) {
         return Ok(parsed.with_timezone(&Utc));
     }
 
-    if let Ok(parsed) = NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f") {
+    if let Ok(parsed) = NaiveDateTime::parse_from_str(&normalized, "%Y-%m-%d %H:%M:%S%.f") {
+        return Ok(parsed.and_utc());
+    }
+
+    if let Ok(parsed) = NaiveDateTime::parse_from_str(&normalized, "%Y-%m-%d %H:%M:%S") {
         return Ok(parsed.and_utc());
     }
 
     Err(format!("unsupported GRL timestamp '{value}'").into())
+}
+
+fn normalize_grl_timestamp(value: &str, fractional_digits: usize) -> String {
+    let Some((prefix, suffix)) = value.split_once('.') else {
+        return value.to_string();
+    };
+
+    let fractional_len = suffix
+        .bytes()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+
+    if fractional_len == 0 {
+        return value.to_string();
+    }
+
+    let (fractional, rest) = suffix.split_at(fractional_len);
+    let truncated: String = fractional.chars().take(fractional_digits).collect();
+
+    format!("{prefix}.{truncated}{rest}")
+}
+
+fn unix_epoch() -> DateTime<Utc> {
+    DateTime::<Utc>::from_timestamp(0, 0).expect("unix epoch should always be representable")
 }
 
 fn load_charge_histograms(path: &Path) -> Result<(Value, Value), DynError> {
@@ -769,4 +825,31 @@ fn read_npz_string_scalar(npz: &mut NpzReader<File>, name: &str) -> Result<Value
     let chars = npz.by_name::<OwnedRepr<u8>, IxDyn>(name)?;
     let value = String::from_utf8(chars.iter().copied().collect())?;
     Ok(Value::String(value.trim_end_matches('\0').to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_grl_timestamp_truncates_subsecond_precision() {
+        let parsed = parse_grl_timestamp(Some("2013-09-22 04:46:09.8246825417"))
+            .expect("timestamp should parse");
+
+        assert_eq!(parsed.to_rfc3339(), "2013-09-22T04:46:09.824682+00:00");
+    }
+
+    #[test]
+    fn parse_grl_timestamp_maps_null_to_unix_epoch() {
+        let parsed = parse_grl_timestamp(Some("null")).expect("null should map to epoch");
+
+        assert_eq!(parsed, unix_epoch());
+    }
+
+    #[test]
+    fn parse_grl_timestamp_maps_json_null_to_unix_epoch() {
+        let parsed = parse_grl_timestamp(None).expect("missing timestamp should map to epoch");
+
+        assert_eq!(parsed, unix_epoch());
+    }
 }

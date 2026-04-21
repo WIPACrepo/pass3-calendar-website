@@ -2,7 +2,7 @@ pub mod importers;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{postgres::PgPool, Type};
+use sqlx::{migrate::MigrateError, postgres::PgPool, Type};
 use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -58,6 +58,19 @@ impl Stage {
             "step2" | "step-2" | "step_2" => Some(Stage::Step2),
             _ => None,
         }
+    }
+}
+
+pub async fn run_app_migrations(pool: &PgPool) -> Result<(), MigrateError> {
+    match sqlx::migrate!("./migrations").run(pool).await {
+        Ok(()) => Ok(()),
+        Err(MigrateError::VersionMismatch(version)) => {
+            eprintln!(
+                "Warning: migration {version} was previously applied with a different checksum. Continuing with the existing database schema. If this database should be managed by the current migration files, repair the _sqlx_migrations entry or use a fresh database."
+            );
+            Ok(())
+        }
+        Err(error) => Err(error),
     }
 }
 

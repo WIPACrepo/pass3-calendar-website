@@ -7,7 +7,7 @@ use axum::{
 };
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use once_cell::sync::Lazy;
-use pass3_calendar_website::{insert_file, NdJsonFileRecord, Stage, Step1FileRecord};
+use pass3_calendar_website::{insert_file, run_app_migrations, NdJsonFileRecord, Stage, Step1FileRecord};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::{PgPool, PgPoolOptions};
@@ -30,8 +30,7 @@ async fn main() {
         .await
         .expect("Failed to connect to database");
 
-    sqlx::migrate!("./migrations")
-        .run(&pool)
+    run_app_migrations(&pool)
         .await
         .expect("Failed to run migrations");
 
