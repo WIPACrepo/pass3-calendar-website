@@ -5,7 +5,7 @@ CREATE TYPE workflow_state AS ENUM (
     'Transfer from Tape',
     'Process Step 1',
     'Finish Step 1',
-    'Transfer WIPAC',
+    'Transfer Step 1 to WIPAC',
     'Step 2 GCD Generated',
     'Process Step 2',
     'Finish Step 2',
