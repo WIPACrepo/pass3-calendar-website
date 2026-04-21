@@ -1,3 +1,6 @@
+pub mod importers;
+
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgPool, Type};
 use uuid::Uuid;
@@ -47,6 +50,35 @@ impl Stage {
             _ => None,
         }
     }
+
+    pub fn from_cli_value(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "raw" | "rawdata" | "raw-data" => Some(Stage::RawData),
+            "step1" | "step-1" | "step_1" => Some(Stage::Step1),
+            "step2" | "step-2" | "step_2" => Some(Stage::Step2),
+            _ => None,
+        }
+    }
+}
+
+pub async fn ensure_run_exists(pool: &PgPool, run_number: i32) -> Result<(), sqlx::Error> {
+    let placeholder_time = DateTime::<Utc>::from_timestamp(0, 0)
+        .expect("unix epoch should always be representable");
+
+    sqlx::query(
+        "INSERT INTO runs (run_number, run_start_date, run_end_date, state, url)
+         VALUES ($1, $2, $3, $4::workflow_state, $5)
+         ON CONFLICT (run_number) DO NOTHING"
+    )
+    .bind(run_number)
+    .bind(placeholder_time)
+    .bind(placeholder_time)
+    .bind("Not Yet Started")
+    .bind(format!("https://live.icecube.wisc.edu/run/{run_number}"))
+    .execute(pool)
+    .await?;
+
+    Ok(())
 }
 
 pub async fn insert_file(
@@ -58,6 +90,8 @@ pub async fn insert_file(
     file_path: &str,
     sha512: &str,
 ) -> Result<(), sqlx::Error> {
+    ensure_run_exists(pool, run_number).await?;
+
     sqlx::query(
         "INSERT INTO run_files (id, run_number, part_number, stage, file_path, sha512)
          VALUES ($1, $2, $3, $4::stage, $5, $6)

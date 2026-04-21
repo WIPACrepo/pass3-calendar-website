@@ -106,6 +106,20 @@ CREATE TABLE IF NOT EXISTS filter_rates (
     UNIQUE(run_number, stage)
 );
 
+-- Create charge_distributions table for storing charge distributions per DOM per run
+CREATE TABLE IF NOT EXISTS charge_distributions (
+    id UUID PRIMARY KEY,
+    run_number INT NOT NULL,
+    stage stage NOT NULL,
+    atwd_histograms JSONB NOT NULL,
+    fadc_histograms JSONB NOT NULL,
+    llh_comparison JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (run_number) REFERENCES runs(run_number) ON DELETE CASCADE,
+    UNIQUE(run_number, stage)
+);
+
 -- Create indexes for faster queries
 CREATE INDEX IF NOT EXISTS idx_runs_state ON runs(state);
 CREATE INDEX IF NOT EXISTS idx_runs_start_date ON runs(run_start_date);

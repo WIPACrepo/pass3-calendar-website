@@ -1,37 +1,29 @@
-use clap::{Parser, ArgGroup};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use pass3_calendar_website::{
+    importers::{
+        import_charge_comparison_files, import_charge_distribution_files, import_filter_rate_files,
+        import_gcd_files, import_grl_file, import_pfraw_file, import_step1_file,
+        inspect_charge_distribution,
+        is_charge_comparison_file, is_charge_distribution_file, is_filter_rate_file,
+        is_gcd_file, list_matching_files, read_path_list,
+    },
+    Stage,
+};
 use sqlx::postgres::PgPoolOptions;
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
 use std::path::Path;
-use uuid::Uuid;
-use regex::Regex;
-use pass3_calendar_website::{NdJsonFileRecord, Step1FileRecord, Stage, insert_file};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
-#[command(group(
-    ArgGroup::new("input")
-        .required(true)
-        .args(["pfraw_file_ndjson", "step1_file_json", "gcd_dir"]),
-))]
-struct Args {
-    /// Path to the PFRaw ndjson file to import
-    #[arg(long)]
-    pfraw_file_ndjson: Option<String>,
+struct Cli {
+    #[command(flatten)]
+    db: DatabaseArgs,
 
-    /// Path to the Step 1 JSON file to import
-    #[arg(long)]
-    step1_file_json: Option<String>,
+    #[command(subcommand)]
+    command: ImportCommand,
+}
 
-    /// Path to directory containing GCD files
-    #[arg(long)]
-    gcd_dir: Option<String>,
-
-    /// Stage for GCD files: "step1" or "step2"
-    #[arg(long, requires = "gcd_dir")]
-    gcd_stage: Option<String>,
-
+#[derive(Args, Debug)]
+struct DatabaseArgs {
     /// Database user
     #[arg(long)]
     db_user: String,
@@ -53,243 +45,177 @@ struct Args {
     db_name: String,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum StageArg {
+    Raw,
+    Step1,
+    Step2,
+}
 
+impl From<StageArg> for Stage {
+    fn from(value: StageArg) -> Self {
+        match value {
+            StageArg::Raw => Stage::RawData,
+            StageArg::Step1 => Stage::Step1,
+            StageArg::Step2 => Stage::Step2,
+        }
+    }
+}
+
+#[derive(Subcommand, Debug)]
+enum ImportCommand {
+    /// Import PFRaw NDJSON file metadata into run_files.
+    Pfraw {
+        #[arg(long)]
+        input: String,
+    },
+    /// Import Step 1 JSON file metadata into run_files.
+    Step1 {
+        #[arg(long)]
+        input: String,
+    },
+
+    /// Import GCD files from either a directory or a newline-delimited list file.
+    Gcd {
+        #[arg(long, conflicts_with = "list_file")]
+        gcd_dir: Option<String>,
+        #[arg(long, conflicts_with = "gcd_dir")]
+        list_file: Option<String>,
+
+        #[arg(long, value_enum)]
+        stage: StageArg,
+    },
+
+    /// Import run metadata from a GRL JSON file.
+    Grl {
+        #[arg(long)]
+        input: String,
+    },
+
+    /// Import filter-rate JSON files into filter_rates.
+    FilterRates {
+        #[arg(long)]
+        input: String,
+
+        #[arg(long, value_enum)]
+        stage: StageArg,
+    },
+
+    /// Import charge-distribution NPZ files into charge_distributions.
+    ChargeDistributions {
+        #[arg(long)]
+        input: String,
+        #[arg(long, value_enum)]
+        stage: StageArg,
+    },
+    /// Import LLH comparison JSON files into charge_distributions.
+    ChargeComparisons {
+        #[arg(long)]
+        input: String,
+
+        #[arg(long, value_enum)]
+        stage: StageArg,
+    },
+
+    /// Inspect a charge-distribution row stored in Postgres.
+    InspectCharge {
+        #[arg(long)]
+        run_number: i32,
+
+        #[arg(long, value_enum)]
+        stage: StageArg,
+
+        #[arg(long)]
+        full_json: bool,
+    },
+}
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let args = Cli::parse();
 
     let database_url = format!(
         "postgres://{}:{}@{}:{}/{}",
-        args.db_user, args.db_password, args.db_host, args.db_port, args.db_name
+        args.db.db_user, args.db.db_password, args.db.db_host, args.db.db_port, args.db.db_name
     );
-
-    println!("Connecting to database at {}:{}...", args.db_host, args.db_port);
+    println!("Connecting to database at {}:{}...", args.db.db_host, args.db.db_port);
 
     let pool = PgPoolOptions::new()
         .max_connections(5)
         .connect(&database_url)
         .await?;
 
-    let mut imported = 0;
-    let mut skipped = 0;
-
-    if let Some(pfraw_path) = args.pfraw_file_ndjson {
-        println!("Importing PFRaw ndjson file: {}", pfraw_path);
-        let file = File::open(pfraw_path)?;
-        let reader = BufReader::new(file);
-
-        for (line_num, line) in reader.lines().enumerate() {
-            let line = line?;
-            if line.trim().is_empty() { continue; }
-            if line.contains("\"file_count\"") { continue; }
-
-            let record: NdJsonFileRecord = match serde_json::from_str(&line) {
-                Ok(r) => r,
-                Err(e) => {
-                    println!("Skipping line {}: Parse error: {}", line_num + 1, e);
-                    skipped += 1;
-                    continue;
-                }
+    let report = match args.command {
+        ImportCommand::Pfraw { input } => {
+            println!("Importing PFRaw NDJSON file: {}", input);
+            import_pfraw_file(&pool, Path::new(&input)).await?
+        }
+        ImportCommand::Step1 { input } => {
+            println!("Importing Step 1 JSON file: {}", input);
+            import_step1_file(&pool, Path::new(&input)).await?
+        }
+        ImportCommand::Gcd {
+            gcd_dir,
+            list_file,
+            stage,
+        } => {
+            let paths = if let Some(gcd_dir) = gcd_dir {
+                println!("Importing GCD files from directory: {}", gcd_dir);
+                list_matching_files(Path::new(&gcd_dir), is_gcd_file)?
+            } else if let Some(list_file) = list_file {
+                println!("Importing GCD files from list: {}", list_file);
+                read_path_list(Path::new(&list_file))?
+                    .into_iter()
+                    .filter(|path| is_gcd_file(path))
+                    .collect()
+            } else {
+                return Err("either --gcd-dir or --list-file is required".into());
             };
 
-            let stage = match Stage::from_processing_level(&record.processing_level) {
-                Some(s) => s,
-                None => {
-                    println!("Skipping line {}: Unknown processing level '{}'", line_num + 1, record.processing_level);
-                    skipped += 1;
-                    continue;
-                }
-            };
-
-            let file_path = Path::new(&record.logical_name)
-                .file_name().and_then(|n| n.to_str()).unwrap_or(&record.logical_name).to_string();
-
-            if let Err(e) = insert_file(&pool, record.uuid, record.run.run_number, record.run.part_number, stage, &file_path, &record.checksum.sha512).await {
-                println!("Error importing run {}: {}", record.run.run_number, e);
-                skipped += 1;
+            println!("Found {} GCD files to process", paths.len());
+            import_gcd_files(&pool, stage.into(), &paths).await?
+        }
+        ImportCommand::Grl { input } => {
+            println!("Importing GRL JSON file: {}", input);
+            import_grl_file(&pool, Path::new(&input)).await?
+        }
+        ImportCommand::FilterRates { input, stage } => {
+            let paths = list_matching_files(Path::new(&input), is_filter_rate_file)?;
+            println!("Found {} filter-rate files to process", paths.len());
+            import_filter_rate_files(&pool, stage.into(), &paths).await?
+        }
+        ImportCommand::ChargeDistributions { input, stage } => {
+            let paths = list_matching_files(Path::new(&input), is_charge_distribution_file)?;
+            println!("Found {} charge-distribution files to process", paths.len());
+            import_charge_distribution_files(&pool, stage.into(), &paths).await?
+        }
+        ImportCommand::ChargeComparisons { input, stage } => {
+            let paths = list_matching_files(Path::new(&input), is_charge_comparison_file)?;
+            println!("Found {} charge-comparison files to process", paths.len());
+            import_charge_comparison_files(&pool, stage.into(), &paths).await?
+        }
+        ImportCommand::InspectCharge {
+            run_number,
+            stage,
+            full_json,
+        } => {
+            let stage = Stage::from(stage);
+            let row = inspect_charge_distribution(&pool, run_number, stage, full_json).await?;
+            if let Some(row) = row {
+                println!("{}", serde_json::to_string_pretty(&row)?);
             } else {
-                imported += 1;
-                if imported % 100 == 0 { println!("Imported {} files...", imported); }
+                println!(
+                    "No charge_distributions row found for run {} at stage {:?}",
+                    run_number, stage
+                );
             }
+            return Ok(());
         }
-
-    } else if let Some(step1_path) = args.step1_file_json {
-        println!("Importing Step 1 JSON file: {}", step1_path);
-        let content = std::fs::read_to_string(step1_path)?;
-        let data: HashMap<String, Vec<Step1FileRecord>> = serde_json::from_str(&content)?;
-
-        // Regex to extract run number and part number from filename
-        // Matches: Run00133578_Subrun00000000_00000033.i3.zst
-        // Assumes part number is the last number group before extension
-        let re = Regex::new(r"Run(\d+)_Subrun\d+_(\d+)\.").unwrap();
-
-        for (_key, records) in data {
-            for record in records {
-                let file_path = Path::new(&record.logical_name)
-                    .file_name().and_then(|n| n.to_str()).unwrap_or(&record.logical_name).to_string();
-
-                let (run_number, part_number) = if let Some(caps) = re.captures(&file_path) {
-                    let r = caps[1].parse::<i32>().unwrap_or(0);
-                    let p = caps[2].parse::<i32>().unwrap_or(0);
-                    (r, p)
-                } else {
-                    println!("Skipping file '{}': Could not parse run/part number", file_path);
-                    skipped += 1;
-                    continue;
-                };
-
-                // Generate deterministic UUID from sha512 (using random namespace or URL)
-                let uuid = Uuid::new_v5(&Uuid::NAMESPACE_URL, record.checksum.sha512.as_bytes());
-
-                if let Err(e) = insert_file(&pool, uuid, run_number, part_number, Stage::Step1, &file_path, &record.checksum.sha512).await {
-                     println!("Error importing run {}: {}", run_number, e);
-                    skipped += 1;
-                } else {
-                    imported += 1;
-                     if imported % 100 == 0 { println!("Imported {} files...", imported); }
-                }
-            }
-        }
-    } else if let Some(gcd_dir_path) = args.gcd_dir {
-        println!("Importing GCD files from directory: {}", gcd_dir_path);
-        
-        let stage = match args.gcd_stage.as_deref() {
-            Some("step1") => Stage::Step1,
-            Some("step2") => Stage::Step2,
-            Some("raw") => Stage::RawData,
-            _ => {
-                eprintln!("Invalid stage '{}'. Must be 'step1', 'step2', or 'raw'", args.gcd_stage.unwrap_or_default());
-                return Ok(());
-            }
-        };
-
-        // Regex to extract run number from GCD filename
-        let re = Regex::new(r"Run(\d+)_").unwrap();
-
-        // Collect all GCD file paths first
-        let dir = std::fs::read_dir(&gcd_dir_path)?;
-        let file_paths: Vec<_> = dir
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path())
-            .filter(|path| {
-                if !path.is_file() {
-                    return false;
-                }
-                let filename = path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("");
-                filename.contains("GCD") && filename.ends_with(".i3.zst")
-            })
-            .collect();
-
-        println!("Found {} GCD files to process", file_paths.len());
-
-        // Use rayon to compute hashes in parallel
-        use rayon::prelude::*;
-        
-        let results: Vec<_> = file_paths
-            .par_iter()
-            .filter_map(|path| {
-                let filename = path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("");
-
-                // Extract run number
-                let run_number = if let Some(caps) = re.captures(filename) {
-                    caps[1].parse::<i32>().unwrap_or(0)
-                } else {
-                    println!("Skipping file '{}': Could not parse run number", filename);
-                    return None;
-                };
-
-                // Get absolute path
-                let absolute_path = path.canonicalize()
-                    .unwrap_or(path.clone())
-                    .to_string_lossy()
-                    .to_string();
-
-                // Compute SHA512
-                let sha512 = match compute_sha512(path) {
-                    Ok(hash) => hash,
-                    Err(e) => {
-                        println!("Error computing SHA512 for '{}': {}", filename, e);
-                        return None;
-                    }
-                };
-
-                Some((run_number, absolute_path, sha512, filename.to_string()))
-            })
-            .collect();
-
-        println!("Successfully hashed {} files, now inserting into database...", results.len());
-
-        // Insert results sequentially into database
-        for (run_number, absolute_path, sha512, filename) in results {
-            // Check if this GCD file already exists (by SHA512)
-            let exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM gcd_files WHERE sha512 = $1)"
-            )
-            .bind(&sha512)
-            .fetch_one(&pool)
-            .await
-            .unwrap_or(false);
-
-            if exists {
-                println!("Skipping file '{}': GCD file with same SHA512 already exists", filename);
-                skipped += 1;
-                continue;
-            }
-
-            // Insert GCD file
-            if let Err(e) = insert_gcd_file(&pool, run_number, stage, &absolute_path, &sha512).await {
-                println!("Error importing GCD file for run {}: {}", run_number, e);
-                skipped += 1;
-            } else {
-                imported += 1;
-                if imported % 10 == 0 { 
-                    println!("Imported {} GCD files...", imported); 
-                }
-            }
-        }
-    }
+    };
 
     println!("\n=== Import Complete ===");
-    println!("Imported: {}", imported);
-    println!("Skipped:  {}", skipped);
+    println!("Imported: {}", report.imported);
+    println!("Skipped:  {}", report.skipped);
 
-    Ok(())
-}
-
-/// Compute SHA512 hash of a file
-fn compute_sha512(path: &Path) -> Result<String, std::io::Error> {
-    use sha2::{Sha512, Digest};
-    
-    let mut file = File::open(path)?;
-    let mut hasher = Sha512::new();
-    std::io::copy(&mut file, &mut hasher)?;
-    let hash = hasher.finalize();
-    Ok(format!("{:x}", hash))
-}
-
-/// Insert a GCD file into the database
-async fn insert_gcd_file(
-    pool: &sqlx::PgPool,
-    run_number: i32,
-    stage: Stage,
-    location: &str,
-    sha512: &str,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO gcd_files (id, run_number, stage, location, sha512) VALUES ($1, $2, $3::stage, $4, $5)
-         ON CONFLICT (run_number, stage) DO UPDATE SET location = EXCLUDED.location, sha512 = EXCLUDED.sha512, updated_at = CURRENT_TIMESTAMP"
-    )
-    .bind(Uuid::new_v4())
-    .bind(run_number)
-    .bind(stage)
-    .bind(location)
-    .bind(sha512)
-    .execute(pool)
-    .await?;
     Ok(())
 }
