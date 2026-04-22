@@ -1,4 +1,6 @@
-use crate::{ensure_run_exists, insert_file, NdJsonFileRecord, Stage, Step1FileRecord};
+use crate::{
+    ensure_run_exists, insert_file, InsertFileResult, NdJsonFileRecord, Stage, Step1FileRecord,
+};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use ndarray::{ArrayD, IxDyn, OwnedRepr};
 use ndarray_npy::NpzReader;
@@ -205,7 +207,7 @@ pub async fn import_pfraw_file(pool: &PgPool, pfraw_path: &Path) -> Result<Impor
             .unwrap_or(&record.logical_name)
             .to_string();
 
-        if let Err(error) = insert_file(
+        match insert_file(
             pool,
             record.uuid,
             record.run.run_number,
@@ -216,10 +218,20 @@ pub async fn import_pfraw_file(pool: &PgPool, pfraw_path: &Path) -> Result<Impor
         )
         .await
         {
-            println!("Error importing run {}: {}", record.run.run_number, error);
-            report.skipped();
-        } else {
-            report.imported();
+            Ok(InsertFileResult::Inserted) => report.imported(),
+            Ok(InsertFileResult::DuplicateSha512) => {
+                println!(
+                    "Skipping run {} part {}: file with SHA512 {} already exists",
+                    record.run.run_number,
+                    record.run.part_number,
+                    record.checksum.sha512
+                );
+                report.skipped();
+            }
+            Err(error) => {
+                println!("Error importing run {}: {}", record.run.run_number, error);
+                report.skipped();
+            }
         }
     }
 
@@ -252,7 +264,7 @@ pub async fn import_step1_file(pool: &PgPool, step1_path: &Path) -> Result<Impor
 
             let id = Uuid::new_v5(&Uuid::NAMESPACE_URL, record.checksum.sha512.as_bytes());
 
-            if let Err(error) = insert_file(
+            match insert_file(
                 pool,
                 id,
                 run_number,
@@ -263,10 +275,20 @@ pub async fn import_step1_file(pool: &PgPool, step1_path: &Path) -> Result<Impor
             )
             .await
             {
-                println!("Error importing run {}: {}", run_number, error);
-                report.skipped();
-            } else {
-                report.imported();
+                Ok(InsertFileResult::Inserted) => report.imported(),
+                Ok(InsertFileResult::DuplicateSha512) => {
+                    println!(
+                        "Skipping run {} part {}: file with SHA512 {} already exists",
+                        run_number,
+                        part_number,
+                        record.checksum.sha512
+                    );
+                    report.skipped();
+                }
+                Err(error) => {
+                    println!("Error importing run {}: {}", run_number, error);
+                    report.skipped();
+                }
             }
         }
     }

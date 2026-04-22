@@ -7,7 +7,9 @@ use axum::{
 };
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use once_cell::sync::Lazy;
-use pass3_calendar_website::{insert_file, run_app_migrations, NdJsonFileRecord, Stage, Step1FileRecord};
+use pass3_calendar_website::{
+    insert_file, run_app_migrations, InsertFileResult, NdJsonFileRecord, Stage, Step1FileRecord,
+};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::{PgPool, PgPoolOptions};
@@ -490,7 +492,7 @@ async fn upload_files(
     let part_re = Regex::new(r"_(\d+)\.").unwrap();
     let mut processed = 0;
     let mut inserted = 0;
-    let updated = 0;
+    let mut updated = 0;
     let mut failed = 0;
 
     for file in payload.files {
@@ -515,7 +517,8 @@ async fn upload_files(
 
         let uuid = Uuid::new_v5(&Uuid::NAMESPACE_URL, file.sha512.as_bytes());
         match insert_file(&pool, uuid, payload.run_number, part_number, stage, &file_name, &file.sha512).await {
-            Ok(_) => inserted += 1,
+            Ok(InsertFileResult::Inserted) => inserted += 1,
+            Ok(InsertFileResult::DuplicateSha512) => updated += 1,
             Err(error) => {
                 eprintln!("Failed to upload file {}: {}", file_name, error);
                 failed += 1;
@@ -672,7 +675,7 @@ async fn import_pfraw(
 
     let mut processed = 0;
     let mut inserted = 0;
-    let updated = 0;
+    let mut updated = 0;
     let mut failed = 0;
 
     for line in body.lines() {
@@ -710,7 +713,8 @@ async fn import_pfraw(
         )
         .await
         {
-            Ok(_) => inserted += 1,
+            Ok(InsertFileResult::Inserted) => inserted += 1,
+            Ok(InsertFileResult::DuplicateSha512) => updated += 1,
             Err(error) => {
                 eprintln!("PFRaw import error: {}", error);
                 failed += 1;
@@ -740,7 +744,7 @@ async fn import_step1(
 
     let mut processed = 0;
     let mut inserted = 0;
-    let updated = 0;
+    let mut updated = 0;
     let mut failed = 0;
 
     for (_key, records) in payload {
@@ -773,7 +777,8 @@ async fn import_step1(
             )
             .await
             {
-                Ok(_) => inserted += 1,
+                Ok(InsertFileResult::Inserted) => inserted += 1,
+                Ok(InsertFileResult::DuplicateSha512) => updated += 1,
                 Err(error) => {
                     eprintln!("Step1 import error: {}", error);
                     failed += 1;

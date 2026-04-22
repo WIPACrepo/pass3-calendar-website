@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 use sqlx::{migrate::MigrateError, postgres::PgPool, Type};
 use uuid::Uuid;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InsertFileResult {
+    Inserted,
+    DuplicateSha512,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NdJsonFileRecord {
     pub uuid: Uuid,
@@ -102,8 +108,19 @@ pub async fn insert_file(
     stage: Stage,
     file_path: &str,
     sha512: &str,
-) -> Result<(), sqlx::Error> {
+) -> Result<InsertFileResult, sqlx::Error> {
     ensure_run_exists(pool, run_number).await?;
+
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM run_files WHERE sha512 = $1)"
+    )
+    .bind(sha512)
+    .fetch_one(pool)
+    .await?;
+
+    if exists {
+        return Ok(InsertFileResult::DuplicateSha512);
+    }
 
     sqlx::query(
         "INSERT INTO run_files (id, run_number, part_number, stage, file_path, sha512)
@@ -123,5 +140,5 @@ pub async fn insert_file(
     .bind(sha512)
     .execute(pool)
     .await?;
-    Ok(())
+    Ok(InsertFileResult::Inserted)
 }
