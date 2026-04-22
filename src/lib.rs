@@ -9,6 +9,7 @@ use uuid::Uuid;
 pub enum InsertFileResult {
     Inserted,
     DuplicateSha512,
+    ExistingStageFileMismatch,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -110,6 +111,25 @@ pub async fn insert_file(
     sha512: &str,
 ) -> Result<InsertFileResult, sqlx::Error> {
     ensure_run_exists(pool, run_number).await?;
+
+    if matches!(stage, Stage::Step1 | Stage::Step2) {
+        let existing_sha512 = sqlx::query_scalar::<_, String>(
+            "SELECT sha512 FROM run_files WHERE run_number = $1 AND part_number = $2 AND stage = $3::stage LIMIT 1"
+        )
+        .bind(run_number)
+        .bind(part_number)
+        .bind(stage)
+        .fetch_optional(pool)
+        .await?;
+
+        if let Some(existing_sha512) = existing_sha512 {
+            return if existing_sha512 == sha512 {
+                Ok(InsertFileResult::DuplicateSha512)
+            } else {
+                Ok(InsertFileResult::ExistingStageFileMismatch)
+            };
+        }
+    }
 
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM run_files WHERE sha512 = $1)"

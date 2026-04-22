@@ -228,6 +228,16 @@ pub async fn import_pfraw_file(pool: &PgPool, pfraw_path: &Path) -> Result<Impor
                 );
                 report.skipped();
             }
+            Ok(InsertFileResult::ExistingStageFileMismatch) => {
+                println!(
+                    "Skipping run {} part {}: existing {} file has a different SHA512 than {}",
+                    record.run.run_number,
+                    record.run.part_number,
+                    stage_label(stage),
+                    record.checksum.sha512
+                );
+                report.skipped();
+            }
             Err(error) => {
                 println!("Error importing run {}: {}", record.run.run_number, error);
                 report.skipped();
@@ -279,6 +289,15 @@ pub async fn import_step1_file(pool: &PgPool, step1_path: &Path) -> Result<Impor
                 Ok(InsertFileResult::DuplicateSha512) => {
                     println!(
                         "Skipping run {} part {}: file with SHA512 {} already exists",
+                        run_number,
+                        part_number,
+                        record.checksum.sha512
+                    );
+                    report.skipped();
+                }
+                Ok(InsertFileResult::ExistingStageFileMismatch) => {
+                    println!(
+                        "Skipping run {} part {}: existing Step 1 file has a different SHA512 than {}",
                         run_number,
                         part_number,
                         record.checksum.sha512

@@ -519,6 +519,7 @@ async fn upload_files(
         match insert_file(&pool, uuid, payload.run_number, part_number, stage, &file_name, &file.sha512).await {
             Ok(InsertFileResult::Inserted) => inserted += 1,
             Ok(InsertFileResult::DuplicateSha512) => updated += 1,
+            Ok(InsertFileResult::ExistingStageFileMismatch) => failed += 1,
             Err(error) => {
                 eprintln!("Failed to upload file {}: {}", file_name, error);
                 failed += 1;
@@ -715,6 +716,7 @@ async fn import_pfraw(
         {
             Ok(InsertFileResult::Inserted) => inserted += 1,
             Ok(InsertFileResult::DuplicateSha512) => updated += 1,
+            Ok(InsertFileResult::ExistingStageFileMismatch) => failed += 1,
             Err(error) => {
                 eprintln!("PFRaw import error: {}", error);
                 failed += 1;
@@ -779,6 +781,7 @@ async fn import_step1(
             {
                 Ok(InsertFileResult::Inserted) => inserted += 1,
                 Ok(InsertFileResult::DuplicateSha512) => updated += 1,
+                Ok(InsertFileResult::ExistingStageFileMismatch) => failed += 1,
                 Err(error) => {
                     eprintln!("Step1 import error: {}", error);
                     failed += 1;
